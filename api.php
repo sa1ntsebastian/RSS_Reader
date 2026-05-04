@@ -184,6 +184,8 @@ try {
         $testUrl = $_GET['url'] ?? 'https://rss.orf.at/news.xml';
         $err = null;
         $body = http_get($testUrl, $err);
+        $parsed = $body !== null ? parse_feed($body) : ['title' => null, 'items' => []];
+        $sample = !empty($parsed['items']) ? $parsed['items'][0] : null;
         echo json_encode([
             'php_version'      => PHP_VERSION,
             'simplexml'        => extension_loaded('simplexml'),
@@ -191,11 +193,15 @@ try {
             'allow_url_fopen'  => (bool)ini_get('allow_url_fopen'),
             'data_writable'    => $writable,
             'cache_writable'   => $cacheWritable,
+            'cache_files'      => is_dir($CACHE_DIR) ? array_values(array_diff(scandir($CACHE_DIR), ['.', '..'])) : [],
             'test_url'         => $testUrl,
             'fetch_ok'         => $body !== null,
             'fetch_bytes'      => $body !== null ? strlen($body) : 0,
             'fetch_error'      => $err,
-        ], JSON_PRETTY_PRINT);
+            'parsed_title'     => $parsed['title'] ?? null,
+            'parsed_item_count'=> count($parsed['items'] ?? []),
+            'parsed_first_item'=> $sample,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         exit;
     }
 
