@@ -124,10 +124,20 @@
         readBtn.textContent = state.read.has(it.guid) ? 'Als ungelesen markieren' : 'Als gelesen markieren';
       };
 
+      const closeAndMarkRead = () => {
+        li.classList.remove('open');
+        markRead(it.guid);
+        li.classList.add('read');
+        setReadLabel();
+      };
+
       titleBtn.onclick = async () => {
-        // Toggle if already loaded
         if (li.classList.contains('article-loaded')) {
-          li.classList.toggle('open');
+          if (li.classList.contains('open')) {
+            closeAndMarkRead();
+          } else {
+            li.classList.add('open');
+          }
           return;
         }
         titleBtn.classList.add('loading');
@@ -135,18 +145,11 @@
           const data = await api('article', { query: { url: it.link } });
           summary.innerHTML = data.html || '<p><em>Kein Inhalt gefunden.</em></p>';
           li.classList.add('article-loaded', 'open');
-          markRead(it.guid);
-          li.classList.add('read');
-          setReadLabel();
         } catch (e) {
-          // Fall back to the feed summary if extraction fails
           if (it.summary && it.summary.trim()) {
             summary.innerHTML = it.summary +
               `<p><em>Vollartikel konnte nicht geladen werden — bitte „Auf Originalseite öffnen" nutzen.</em></p>`;
             li.classList.add('article-loaded', 'open');
-            markRead(it.guid);
-            li.classList.add('read');
-            setReadLabel();
           } else {
             alert('Artikel konnte nicht geladen werden: ' + e.message);
           }

@@ -250,6 +250,45 @@ a:hover { text-decoration: underline; }
   padding-left: 14px; color: var(--muted); margin: 14px 0;
 }
 
+/* Reading mode: warm paper-like card with dark text for comfortable reading */
+.entry.article-loaded.open {
+  background: #f5efe6;
+  color: var(--black);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.entry.article-loaded.open .entry-head { color: rgba(49, 49, 49, 0.65); }
+.entry.article-loaded.open .entry-head .feed-name { color: #b3651f; }
+.entry.article-loaded.open h3 .title-btn { color: var(--black); }
+.entry.article-loaded.open h3 .title-btn:hover { color: #b3651f; }
+.entry.article-loaded.open .summary { color: var(--black); border-top-color: rgba(0, 0, 0, 0.1); }
+.entry.article-loaded.open .summary h1,
+.entry.article-loaded.open .summary h2,
+.entry.article-loaded.open .summary h3 { color: var(--black); }
+.entry.article-loaded.open .summary a { color: var(--blue); }
+.entry.article-loaded.open .summary figcaption { color: rgba(49, 49, 49, 0.65); }
+.entry.article-loaded.open .summary blockquote {
+  color: rgba(49, 49, 49, 0.75);
+  border-left-color: #b3651f;
+}
+.entry.article-loaded.open .open-original {
+  color: rgba(49, 49, 49, 0.5);
+}
+.entry.article-loaded.open .open-original:hover {
+  color: var(--white); background: var(--green);
+}
+.entry.article-loaded.open .actions button {
+  color: rgba(49, 49, 49, 0.7);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+.entry.article-loaded.open .actions button:hover {
+  color: var(--black);
+  border-color: #b3651f;
+}
+
+/* Don't dim the article that's currently open, even if marked read */
+.entry.read.open { opacity: 1; }
+
 .actions {
   display: flex; gap: 12px; margin-top: 10px;
   font-size: 0.8rem;
