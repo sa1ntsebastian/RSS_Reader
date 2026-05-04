@@ -42,20 +42,55 @@ function save_feeds(string $file, array $feeds): void {
     rename($tmp, $file);
 }
 
-function http_get(string $url): ?string {
+function http_get(string $url, ?string &$err = null): ?string {
+    $ua     = 'SimpleRSSReader/1.0';
+    $accept = 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5';
+
+    // Prefer cURL if available – works even when allow_url_fopen is off.
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_USERAGENT      => $ua,
+            CURLOPT_HTTPHEADER     => ['Accept: ' . $accept],
+            CURLOPT_ENCODING       => '',
+        ]);
+        $body = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $cerr = curl_error($ch);
+        curl_close($ch);
+        if ($body === false) { $err = 'cURL: ' . $cerr; return null; }
+        if ($code >= 400)    { $err = 'HTTP ' . $code; return null; }
+        return (string)$body;
+    }
+
+    if (!ini_get('allow_url_fopen')) {
+        $err = 'cURL nicht installiert und allow_url_fopen=Off';
+        return null;
+    }
+
     $ctx = stream_context_create([
         'http' => [
-            'method'        => 'GET',
-            'timeout'       => 10,
+            'method'         => 'GET',
+            'timeout'        => 15,
             'follow_location'=> 1,
-            'max_redirects' => 5,
-            'header'        => "User-Agent: SimpleRSSReader/1.0\r\nAccept: application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5\r\n",
-            'ignore_errors' => true,
+            'max_redirects'  => 5,
+            'header'         => "User-Agent: $ua\r\nAccept: $accept\r\n",
+            'ignore_errors'  => true,
         ],
         'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
     $body = @file_get_contents($url, false, $ctx);
-    return $body === false ? null : $body;
+    if ($body === false) {
+        $e = error_get_last();
+        $err = 'fopen: ' . ($e['message'] ?? 'unbekannter Fehler');
+        return null;
+    }
+    return $body;
 }
 
 function parse_feed(string $xml): array {
@@ -120,11 +155,12 @@ function cache_path(string $cacheDir, string $id): string {
 }
 
 function fetch_and_cache(string $url, string $id, string $cacheDir): array {
-    $body = http_get($url);
-    if ($body === null) return ['title' => null, 'items' => [], 'error' => 'fetch failed'];
+    $err = null;
+    $body = http_get($url, $err);
+    if ($body === null) return ['title' => null, 'items' => [], 'error' => $err ?: 'fetch failed'];
     $parsed = parse_feed($body);
     $parsed['fetched'] = time();
-    file_put_contents(cache_path($cacheDir, $id), json_encode($parsed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    @file_put_contents(cache_path($cacheDir, $id), json_encode($parsed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
     return $parsed;
 }
 
@@ -142,6 +178,27 @@ $method = $_SERVER['REQUEST_METHOD'];
 $body   = json_decode(file_get_contents('php://input') ?: 'null', true);
 
 try {
+    if ($method === 'GET' && $action === 'diag') {
+        $writable = is_writable($DATA_DIR);
+        $cacheWritable = is_writable($CACHE_DIR);
+        $testUrl = $_GET['url'] ?? 'https://rss.orf.at/news.xml';
+        $err = null;
+        $body = http_get($testUrl, $err);
+        echo json_encode([
+            'php_version'      => PHP_VERSION,
+            'simplexml'        => extension_loaded('simplexml'),
+            'curl'             => function_exists('curl_init'),
+            'allow_url_fopen'  => (bool)ini_get('allow_url_fopen'),
+            'data_writable'    => $writable,
+            'cache_writable'   => $cacheWritable,
+            'test_url'         => $testUrl,
+            'fetch_ok'         => $body !== null,
+            'fetch_bytes'      => $body !== null ? strlen($body) : 0,
+            'fetch_error'      => $err,
+        ], JSON_PRETTY_PRINT);
+        exit;
+    }
+
     if ($method === 'GET' && $action === 'list') {
         echo json_encode(['feeds' => load_feeds($FEEDS_FILE)]);
         exit;
@@ -175,8 +232,11 @@ try {
         foreach ($feeds as $f) if ($f['id'] === $id) fail(409, 'Feed existiert bereits');
 
         $parsed = fetch_and_cache($url, $id, $CACHE_DIR);
+        if (!empty($parsed['error'])) {
+            fail(502, 'Feed konnte nicht geladen werden (' . $parsed['error'] . ')');
+        }
         if (empty($parsed['items']) && empty($parsed['title'])) {
-            fail(422, 'Konnte Feed nicht parsen');
+            fail(422, 'Konnte Feed nicht parsen (kein gültiges RSS/Atom?)');
         }
         $feeds[] = [
             'id'    => $id,
