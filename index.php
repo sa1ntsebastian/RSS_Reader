@@ -76,6 +76,7 @@ require_login_html();
         <button id="btn-mark-all" title="Alles als gelesen markieren">alles gelesen</button>
       </div>
     </header>
+    <button id="new-pill" class="hidden" type="button" aria-live="polite"></button>
     <ul id="items"></ul>
   </main>
 

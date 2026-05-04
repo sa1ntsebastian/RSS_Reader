@@ -26,9 +26,26 @@
     btnExport:  document.getElementById('btn-export'),
     opmlFile:   document.getElementById('opml-file'),
     btnNewFolder: document.getElementById('btn-new-folder'),
+    newPill:    document.getElementById('new-pill'),
   };
 
   const COLLAPSED_KEY = 'rss.collapsedFolders';
+  const READMODE_KEY  = 'rss.readMode';     // { theme: 'sepia'|'light'|'dark', size: 0..4 }
+
+  function loadReadMode() {
+    try {
+      const v = JSON.parse(localStorage.getItem(READMODE_KEY) || '{}');
+      return { theme: v.theme || 'sepia', size: typeof v.size === 'number' ? v.size : 1 };
+    } catch { return { theme: 'sepia', size: 1 }; }
+  }
+  function saveReadMode(m) { localStorage.setItem(READMODE_KEY, JSON.stringify(m)); }
+  let readMode = loadReadMode();
+
+  function applyReadMode() {
+    document.body.dataset.readTheme = readMode.theme;
+    document.body.dataset.readSize  = String(readMode.size);
+  }
+  applyReadMode();
   const state = {
     feeds:    [],
     folders:  [],
@@ -43,6 +60,7 @@
     pendingState: { read: { add: new Set(), remove: new Set() }, star: { add: new Set(), remove: new Set() } },
     pendingFlush: null,
     collapsedFolders: new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')),
+    pendingItems: null, // items fetched in background, awaiting user "show" click
   };
 
   function toggleFolderCollapsed(name) {
@@ -465,6 +483,33 @@
         setReadLabel();
         renderFeeds();
       };
+      const injectReadToolbar = () => {
+        if (li.querySelector('.read-toolbar')) return;
+        const tb = document.createElement('div');
+        tb.className = 'read-toolbar';
+        tb.innerHTML = `
+          <div class="rt-group" role="group" aria-label="Schriftgröße">
+            <button data-rt="size-down" aria-label="Kleiner">A−</button>
+            <button data-rt="size-up"   aria-label="Größer">A+</button>
+          </div>
+          <div class="rt-group" role="group" aria-label="Lesefarbe">
+            <button data-rt="theme-sepia" title="Sepia">●</button>
+            <button data-rt="theme-light" title="Hell">○</button>
+            <button data-rt="theme-dark"  title="Dunkel">◐</button>
+          </div>`;
+        tb.addEventListener('click', (e) => {
+          const t = e.target.closest('button')?.dataset.rt;
+          if (!t) return;
+          e.stopPropagation();
+          if (t === 'size-up')   readMode.size = Math.min(4, readMode.size + 1);
+          if (t === 'size-down') readMode.size = Math.max(0, readMode.size - 1);
+          if (t.startsWith('theme-')) readMode.theme = t.slice(6);
+          saveReadMode(readMode);
+          applyReadMode();
+        });
+        summary.parentNode.insertBefore(tb, summary);
+      };
+
       const openArticle = async () => {
         if (li.classList.contains('article-loaded')) { li.classList.add('open'); return; }
         titleBtn.classList.add('loading');
@@ -475,11 +520,13 @@
             const t = li.querySelector('time');
             if (t) t.textContent = `${time} · ${data.reading_min} Min`;
           }
+          injectReadToolbar();
           li.classList.add('article-loaded', 'open');
         } catch (e) {
           if (it.summary && it.summary.trim()) {
             summary.innerHTML = it.summary +
               `<p><em>Vollartikel konnte nicht geladen werden — bitte „Auf Originalseite öffnen" nutzen.</em></p>`;
+            injectReadToolbar();
             li.classList.add('article-loaded', 'open');
           } else { alert('Artikel konnte nicht geladen werden: ' + e.message); }
         } finally { titleBtn.classList.remove('loading'); }
@@ -513,9 +560,62 @@
         }
       });
 
+      attachSwipe(li, it, { closeAndMarkRead, setReadLabel });
+
       els.items.appendChild(li);
       state.visibleEntries.push({ li, it, openArticle, closeAndMarkRead });
     }
+  }
+
+  function attachSwipe(li, it, ctx) {
+    let startX = 0, startY = 0, dx = 0, dy = 0, active = false, decided = false;
+    const TH = 60; // px to commit
+    const setOffset = (x) => { li.style.transform = x ? `translateX(${x}px)` : ''; };
+    const setHint = (cls) => {
+      li.classList.remove('swipe-read', 'swipe-star');
+      if (cls) li.classList.add(cls);
+    };
+
+    li.addEventListener('touchstart', (e) => {
+      if (li.classList.contains('open')) return;
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      dx = 0; dy = 0; active = true; decided = false;
+    }, { passive: true });
+
+    li.addEventListener('touchmove', (e) => {
+      if (!active) return;
+      dx = e.touches[0].clientX - startX;
+      dy = e.touches[0].clientY - startY;
+      if (!decided) {
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) { active = false; return; }
+        if (Math.abs(dx) > 8) decided = true;
+      }
+      if (decided) {
+        e.preventDefault();
+        setOffset(dx);
+        setHint(dx < -TH ? 'swipe-read' : dx > TH ? 'swipe-star' : '');
+      }
+    }, { passive: false });
+
+    li.addEventListener('touchend', () => {
+      if (!active) return;
+      active = false;
+      const committed = Math.abs(dx) > TH;
+      setOffset(0);
+      setHint('');
+      if (!committed) return;
+      if (dx < 0) {
+        // left swipe → mark read & close
+        ctx.closeAndMarkRead();
+      } else {
+        // right swipe → toggle star
+        toggleStar(it.guid);
+        li.classList.toggle('starred', state.starred.has(it.guid));
+      }
+    });
+    li.addEventListener('touchcancel', () => { active = false; setOffset(0); setHint(''); });
   }
 
   // ---------- actions ----------
@@ -586,6 +686,80 @@
       await loadItems();
     } catch (e) { setStatus('Fehler: ' + e.message); }
   }
+
+  /**
+   * Background poll: fetches latest items + state without disturbing the
+   * scroll position. New items go to a pending list and a pill appears at
+   * the top inviting the user to merge them.
+   */
+  async function backgroundSync() {
+    try {
+      const [itemsRes, stateRes] = await Promise.all([
+        api('items', { query: { id: 'all' } }),
+        api('state'),
+      ]);
+      // 1) State (read/starred) — apply to live state. Updates badges
+      //    and dim/star the visible cards in place.
+      const newRead    = new Set(stateRes.read    || []);
+      const newStarred = new Set(stateRes.starred || []);
+      const stateChanged = !setsEqual(newRead, state.read) || !setsEqual(newStarred, state.starred);
+      if (stateChanged) {
+        state.read    = newRead;
+        state.starred = newStarred;
+        applyStateToVisibleEntries();
+        renderFeeds();
+      }
+
+      // 2) Items — only show pill if there are *new* guids
+      const fresh = itemsRes.items || [];
+      const knownGuids = new Set(state.items.map(i => i.guid));
+      const newOnes = fresh.filter(i => !knownGuids.has(i.guid));
+      if (newOnes.length > 0) {
+        state.pendingItems = fresh;
+        showNewPill(newOnes.length);
+      } else if (fresh.length !== state.items.length) {
+        // Items disappeared (rotated out of feed). Quietly resync.
+        state.items = fresh;
+        renderFeeds(); // counts may have changed
+      }
+    } catch (e) {
+      // silent on background poll
+      console.warn('background sync', e);
+    }
+  }
+
+  function setsEqual(a, b) {
+    if (a.size !== b.size) return false;
+    for (const x of a) if (!b.has(x)) return false;
+    return true;
+  }
+
+  function applyStateToVisibleEntries() {
+    for (const entry of state.visibleEntries) {
+      const isRead = state.read.has(entry.it.guid);
+      const isStar = state.starred.has(entry.it.guid);
+      entry.li.classList.toggle('read', isRead);
+      entry.li.classList.toggle('starred', isStar);
+      const readBtn = entry.li.querySelector('[data-act="read"]');
+      if (readBtn) readBtn.textContent = isRead ? 'als ungelesen' : 'als gelesen';
+    }
+  }
+
+  function showNewPill(count) {
+    els.newPill.textContent = `${count} neue${count === 1 ? 'r' : ''} Artikel — anzeigen`;
+    els.newPill.classList.remove('hidden');
+  }
+  function hideNewPill() { els.newPill.classList.add('hidden'); }
+
+  function applyPendingItems() {
+    if (!state.pendingItems) return;
+    state.items = state.pendingItems;
+    state.pendingItems = null;
+    hideNewPill();
+    renderFeeds();
+    renderItems();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
   async function markAllRead() {
     const fid = state.activeId;
     const txt = fid === 'all' ? 'Alle Artikel als gelesen markieren?' : 'Diesen Feed als gelesen markieren?';
@@ -599,8 +773,14 @@
   function setupAutoRefresh() {
     if (state.refreshTimer) clearInterval(state.refreshTimer);
     const ms = (state.settings.refresh_interval || 0) * 1000;
-    if (ms > 0) state.refreshTimer = setInterval(() => refreshAll(true), ms);
+    if (ms > 0) state.refreshTimer = setInterval(backgroundSync, ms);
   }
+
+  // Sync state back from the server when the tab regains focus — picks up
+  // anything the iPhone widget or another browser already marked.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') backgroundSync();
+  });
 
   // ---------- settings dialog ----------
   function openSettings() {
@@ -720,6 +900,7 @@
   els.refresh.addEventListener('click', () => refreshAll());
   els.markAll.addEventListener('click', markAllRead);
   els.btnNewFolder.addEventListener('click', createFolder);
+  els.newPill.addEventListener('click', applyPendingItems);
   els.hideRead.addEventListener('change', renderItems);
   els.onlyStar.addEventListener('change', renderItems);
 

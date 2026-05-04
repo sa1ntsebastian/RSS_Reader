@@ -101,6 +101,18 @@ scriptable-widget.js         – iOS-Widget (in Scriptable importieren)
   Schreibende Operationen (add, remove, mark-read…) erfordern eine Browser-Session.
 - HTTPS auf dem Webspace einrichten (Let's Encrypt o. Ä.) — Cookies/Token gehören nicht über HTTP.
 
+## Cron-Job (empfohlen)
+
+Damit das iOS-Widget immer frische Headlines zeigt — auch ohne dass der Browser
+offen ist — richte am Webspace einen Cron-Job ein, der alle 15 Min den Refresh anstößt:
+
+```
+*/15 * * * * curl -s "https://deinedomain.tld/rss/cron.php?key=<API_TOKEN>" >/dev/null
+```
+
+Der `<API_TOKEN>` ist derselbe Widget-Token aus den Einstellungen. Auf den meisten
+Webhostern legst du den Cron im Kundencenter unter „Cronjobs" an.
+
 ## Diagnose
 
 Wenn etwas nicht klappt: `https://deinedomain.tld/rss/api.php?action=diag` (eingeloggt)

@@ -14,11 +14,18 @@ if (!is_dir($DATA_DIR))  @mkdir($DATA_DIR, 0775, true);
 if (!is_dir($CACHE_DIR)) @mkdir($CACHE_DIR, 0775, true);
 
 // Per-action auth: GET endpoints accept either session login or ?token=
-// (used by the iOS widget). All write endpoints require a real session.
+// (used by the iOS widget). The widget also needs to flip read/star state,
+// so 'state' POSTs are allowed via token too. Everything else (feed CRUD,
+// settings, OPML, regenerate-token) requires a real browser session.
 $action = $_GET['action'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];
 $READ_ONLY_TOKEN_OK = ['list','items','article','state','settings'];
-if ($method === 'GET' && in_array($action, $READ_ONLY_TOKEN_OK, true)) {
+$WRITE_TOKEN_OK     = ['state'];
+$tokenOk = (
+    ($method === 'GET'  && in_array($action, $READ_ONLY_TOKEN_OK, true)) ||
+    ($method === 'POST' && in_array($action, $WRITE_TOKEN_OK, true))
+);
+if ($tokenOk) {
     if (!auth_logged_in_or_token()) {
         http_response_code(401);
         header('Content-Type: application/json; charset=utf-8');
