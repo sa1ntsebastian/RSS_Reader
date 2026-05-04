@@ -98,22 +98,23 @@ function parse_feed(string $xml): array {
     $sx = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
     if (!$sx) return ['title' => null, 'items' => []];
 
+    $root = strtolower($sx->getName()); // "rss" | "feed" | "rdf"
     $items = [];
     $title = null;
 
-    // RSS 2.0
-    if (isset($sx->channel)) {
+    if ($root === 'rss' && isset($sx->channel)) {
+        // RSS 2.0
         $title = (string)$sx->channel->title;
         foreach ($sx->channel->item as $it) {
-            $items[] = [
-                'title'   => trim((string)$it->title),
-                'link'    => trim((string)$it->link),
-                'date'    => strtotime((string)$it->pubDate) ?: time(),
-                'summary' => clean_html((string)($it->description ?? '')),
-                'guid'    => (string)($it->guid ?? $it->link ?? $it->title),
-            ];
+            $items[] = rss_item_to_array($it);
         }
-    } else {
+    } elseif ($root === 'rdf' || (isset($sx->channel) && isset($sx->item))) {
+        // RSS 1.0 (RDF) — items are siblings of <channel>, not children
+        $title = (string)$sx->channel->title;
+        foreach ($sx->item as $it) {
+            $items[] = rss_item_to_array($it);
+        }
+    } elseif ($root === 'feed') {
         // Atom
         $title = (string)$sx->title;
         foreach ($sx->entry as $it) {
@@ -135,6 +136,32 @@ function parse_feed(string $xml): array {
 
     usort($items, fn($a, $b) => $b['date'] <=> $a['date']);
     return ['title' => $title ?: null, 'items' => $items];
+}
+
+function rss_item_to_array(SimpleXMLElement $it): array {
+    // Date can come from pubDate (RSS 2.0) or dc:date (RSS 1.0 / extensions)
+    $dc      = $it->children('http://purl.org/dc/elements/1.1/');
+    $content = $it->children('http://purl.org/rss/1.0/modules/content/');
+    $dateStr = (string)($it->pubDate ?? '');
+    if ($dateStr === '' && isset($dc->date)) $dateStr = (string)$dc->date;
+
+    $summary = (string)($it->description ?? '');
+    if ($summary === '' && isset($content->encoded)) $summary = (string)$content->encoded;
+
+    $link = trim((string)$it->link);
+    if ($link === '') {
+        // RSS 1.0 sometimes uses rdf:about as the canonical URL
+        $rdf = $it->attributes('http://www.w3.org/1999/02/22-rdf-syntax-ns#');
+        if (isset($rdf->about)) $link = (string)$rdf->about;
+    }
+
+    return [
+        'title'   => trim((string)$it->title),
+        'link'    => $link,
+        'date'    => $dateStr ? (strtotime($dateStr) ?: time()) : time(),
+        'summary' => clean_html($summary),
+        'guid'    => (string)($it->guid ?? $link ?? $it->title),
+    ];
 }
 
 function clean_html(string $html): string {
