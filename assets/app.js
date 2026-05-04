@@ -28,6 +28,7 @@
     btnNewFolder: document.getElementById('btn-new-folder'),
   };
 
+  const COLLAPSED_KEY = 'rss.collapsedFolders';
   const state = {
     feeds:    [],
     folders:  [],
@@ -36,12 +37,20 @@
     read:     new Set(),
     starred:  new Set(),
     settings: { cache_ttl: 900, refresh_interval: 300, hide_read_default: false, api_token: null },
-    cursorIdx: -1,         // currently focused entry index
-    visibleEntries: [],    // entries currently rendered (after filters)
+    cursorIdx: -1,
+    visibleEntries: [],
     refreshTimer: null,
     pendingState: { read: { add: new Set(), remove: new Set() }, star: { add: new Set(), remove: new Set() } },
     pendingFlush: null,
+    collapsedFolders: new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')),
   };
+
+  function toggleFolderCollapsed(name) {
+    if (state.collapsedFolders.has(name)) state.collapsedFolders.delete(name);
+    else state.collapsedFolders.add(name);
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsedFolders]));
+    renderFeeds();
+  }
 
   // ---------- API ----------
   async function api(action, opts = {}) {
@@ -254,15 +263,22 @@
     const folderNames = [...byFolder.keys()];
 
     for (const folder of folderNames) {
+      const collapsed = folder !== '' && state.collapsedFolders.has(folder);
       if (folder !== '') {
         const folderId = 'folder:' + folder;
         const h = document.createElement('div');
-        h.className = 'folder-header' + (state.activeId === folderId ? ' active' : '');
+        h.className = 'folder-header' + (state.activeId === folderId ? ' active' : '') + (collapsed ? ' collapsed' : '');
         h.innerHTML = `
+          <button class="folder-toggle" title="${collapsed ? 'Aufklappen' : 'Einklappen'}" aria-label="Ordner ein-/ausklappen">
+            <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M8 5l8 7-8 7"/>
+            </svg>
+          </button>
           <span class="title">${escapeHtml(folder)}</span>
           ${countBadge(counts.folders[folder] || 0)}
           <button class="folder-rename" title="Umbenennen" aria-label="Umbenennen">✎</button>
           <button class="folder-delete" title="Ordner löschen" aria-label="Ordner löschen">×</button>`;
+        h.querySelector('.folder-toggle').onclick = (e) => { e.stopPropagation(); toggleFolderCollapsed(folder); };
         h.querySelector('.title').onclick = () => selectFeed(folderId);
         h.querySelector('.count').onclick = () => selectFeed(folderId);
         h.querySelector('.folder-rename').onclick = (e) => { e.stopPropagation(); renameFolder(folder); };
@@ -274,11 +290,20 @@
         });
         h.addEventListener('dragend', () => h.classList.remove('dragging'));
         attachDropTarget(h, (data) => {
-          if (data.kind === 'feed')   assignFeedToFolder(data.id, folder);
-          else if (data.kind === 'folder' && data.name !== folder) moveFolderToFolder(data.name, folder);
+          // Auto-expand when dropping a feed into a collapsed folder
+          if (data.kind === 'feed') {
+            if (state.collapsedFolders.has(folder)) {
+              state.collapsedFolders.delete(folder);
+              localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsedFolders]));
+            }
+            assignFeedToFolder(data.id, folder);
+          } else if (data.kind === 'folder' && data.name !== folder) {
+            moveFolderToFolder(data.name, folder);
+          }
         });
         els.feedList.appendChild(h);
       }
+      if (collapsed) continue;
       for (const f of byFolder.get(folder)) {
         const c = counts[f.id] || 0;
         const el = document.createElement('div');

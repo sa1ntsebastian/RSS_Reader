@@ -252,6 +252,20 @@ label,
   color: var(--muted);
   font-weight: 400;
 }
+.folder-header .folder-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent;
+  color: var(--muted);
+  width: 18px; height: 18px;
+  margin-right: 4px; padding: 0;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: transform .15s, color .15s;
+}
+.folder-header .folder-toggle svg { transition: transform .2s ease; }
+.folder-header:not(.collapsed) .folder-toggle svg { transform: rotate(90deg); }
+.folder-header .folder-toggle:hover { color: var(--white); }
+
 .folder-header .folder-rename,
 .folder-header .folder-delete {
   border: 0; background: transparent; color: var(--muted);
