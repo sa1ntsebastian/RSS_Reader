@@ -99,25 +99,51 @@
       const li = document.createElement('li');
       li.className = 'entry' + (state.read.has(it.guid) ? ' read' : '');
       const date = new Date((it.date || 0) * 1000);
+      const hasSummary = !!(it.summary && it.summary.trim());
       li.innerHTML = `
         <div class="entry-head">
           <span class="feed-name">${escapeHtml(it.feedTitle)}</span>
           <time datetime="${date.toISOString()}">${formatDate(date)}</time>
         </div>
         <h3><a href="${escapeAttr(it.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title || '(ohne Titel)')}</a></h3>
-        <div class="summary">${it.summary || ''}</div>
+        <div class="summary">${hasSummary ? it.summary : ''}</div>
         <div class="actions">
-          <button data-act="toggle">Vorschau</button>
+          ${hasSummary ? '<button data-act="toggle">Vorschau</button>' : ''}
+          <button data-act="article">Im Reader lesen</button>
           <button data-act="read">${state.read.has(it.guid) ? 'Als ungelesen markieren' : 'Als gelesen markieren'}</button>
         </div>`;
       const summary = li.querySelector('.summary');
-      li.querySelector('[data-act="toggle"]').onclick = () => {
+      const toggleBtn = li.querySelector('[data-act="toggle"]');
+      if (toggleBtn) toggleBtn.onclick = () => {
         li.classList.toggle('open');
-        // also mark as read on open
         if (li.classList.contains('open')) {
           markRead(it.guid);
           li.classList.add('read');
           li.querySelector('[data-act="read"]').textContent = 'Als ungelesen markieren';
+        }
+      };
+      const articleBtn = li.querySelector('[data-act="article"]');
+      articleBtn.onclick = async () => {
+        if (li.classList.contains('article-loaded')) {
+          li.classList.toggle('open');
+          return;
+        }
+        articleBtn.disabled = true;
+        const original = articleBtn.textContent;
+        articleBtn.textContent = 'Lädt …';
+        try {
+          const data = await api('article', { query: { url: it.link } });
+          summary.innerHTML = data.html || '<p><em>Kein Inhalt gefunden.</em></p>';
+          li.classList.add('article-loaded', 'open');
+          markRead(it.guid);
+          li.classList.add('read');
+          li.querySelector('[data-act="read"]').textContent = 'Als ungelesen markieren';
+          articleBtn.textContent = 'Artikel ein-/ausblenden';
+        } catch (e) {
+          articleBtn.textContent = original;
+          alert('Artikel konnte nicht geladen werden: ' + e.message);
+        } finally {
+          articleBtn.disabled = false;
         }
       };
       li.querySelector('[data-act="read"]').onclick = (e) => {

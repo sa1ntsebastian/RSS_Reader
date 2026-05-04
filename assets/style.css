@@ -147,9 +147,23 @@ a:hover { text-decoration: underline; }
   max-height: 0; overflow: hidden;
   transition: max-height .25s ease;
 }
-.entry.open .summary { max-height: 4000px; }
+.entry.open .summary { max-height: 100000px; }
 .entry .summary img { max-width: 100%; height: auto; border-radius: 6px; margin: 8px 0; }
 .entry .summary p:first-child { margin-top: 0; }
+.entry.article-loaded .summary {
+  font-size: 15px; color: var(--text); line-height: 1.65;
+  border-top: 1px solid var(--border);
+  padding-top: 12px; margin-top: 10px;
+}
+.entry.article-loaded .summary h1,
+.entry.article-loaded .summary h2,
+.entry.article-loaded .summary h3 { line-height: 1.3; margin-top: 1.2em; }
+.entry.article-loaded .summary figure { margin: 12px 0; }
+.entry.article-loaded .summary figcaption { font-size: 13px; color: var(--muted); }
+.entry.article-loaded .summary blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px; color: var(--muted); margin: 12px 0;
+}
 .entry .actions {
   display: flex; gap: 12px; margin-top: 8px;
   font-size: 13px;

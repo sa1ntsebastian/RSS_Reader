@@ -173,6 +173,124 @@ function clean_html(string $html): string {
     return $html;
 }
 
+/**
+ * Fetch an article URL and extract a readable HTML body.
+ * Returns ['title' => …, 'html' => …, 'byline' => …] or null on failure.
+ */
+function extract_article(string $url): ?array {
+    $err = null;
+    $html = http_get($url, $err);
+    if ($html === null || strlen($html) < 200) return null;
+
+    libxml_use_internal_errors(true);
+    $doc = new DOMDocument();
+    // Force UTF-8 interpretation regardless of meta charset
+    $doc->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NONET);
+    libxml_clear_errors();
+
+    $xp = new DOMXPath($doc);
+
+    // Title: prefer og:title, then <title>
+    $title = '';
+    foreach ($xp->query('//meta[@property="og:title"]/@content') as $n) { $title = trim($n->nodeValue); break; }
+    if ($title === '') {
+        foreach ($xp->query('//title') as $n) { $title = trim($n->textContent); break; }
+    }
+
+    // Pick the most likely content container
+    $candidates = [
+        '//article',
+        '//*[@itemprop="articleBody"]',
+        '//main',
+        '//*[contains(@class,"article-body")]',
+        '//*[contains(@class,"story-content")]',
+        '//*[contains(@class,"entry-content")]',
+        '//*[contains(@class,"post-content")]',
+        '//*[contains(@class,"content-body")]',
+        '//*[contains(@id,"article")]',
+        '//*[contains(@id,"content")]',
+    ];
+    $best = null; $bestScore = 0;
+    foreach ($candidates as $q) {
+        foreach ($xp->query($q) as $node) {
+            $text = trim(preg_replace('/\s+/u', ' ', $node->textContent ?? ''));
+            $score = mb_strlen($text);
+            if ($score > $bestScore) { $best = $node; $bestScore = $score; }
+        }
+    }
+    // Fallback: pick the <div> or <section> with the most paragraph text
+    if (!$best || $bestScore < 400) {
+        foreach ($xp->query('//div | //section') as $node) {
+            $pCount = $xp->evaluate('count(.//p)', $node);
+            if ($pCount < 3) continue;
+            $text = trim(preg_replace('/\s+/u', ' ', $node->textContent ?? ''));
+            $score = mb_strlen($text);
+            if ($score > $bestScore) { $best = $node; $bestScore = $score; }
+        }
+    }
+    if (!$best || $bestScore < 200) return null;
+
+    // Strip junk inside the chosen container
+    $strip = ['script','style','noscript','iframe','form','aside','nav','header','footer','svg','button'];
+    foreach ($strip as $tag) {
+        $kill = [];
+        foreach ($best->getElementsByTagName($tag) as $n) $kill[] = $n;
+        foreach ($kill as $n) $n->parentNode?->removeChild($n);
+    }
+    // Remove obvious junk by class/id (ads, share, related, comments)
+    $junk = $xp->query(
+        ".//*[contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'share') " .
+        "or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'related') " .
+        "or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'comment') " .
+        "or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'newsletter') " .
+        "or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'advert') " .
+        "or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'promo')]",
+        $best
+    );
+    $kill = []; foreach ($junk as $n) $kill[] = $n;
+    foreach ($kill as $n) $n->parentNode?->removeChild($n);
+
+    // Make image and link URLs absolute
+    $base = $url;
+    foreach ($best->getElementsByTagName('img') as $img) {
+        $src = $img->getAttribute('data-src') ?: $img->getAttribute('src');
+        if ($src) $img->setAttribute('src', absolutize_url($base, $src));
+        $img->removeAttribute('srcset');
+        $img->removeAttribute('loading');
+    }
+    foreach ($best->getElementsByTagName('a') as $a) {
+        $href = $a->getAttribute('href');
+        if ($href) $a->setAttribute('href', absolutize_url($base, $href));
+        $a->setAttribute('target', '_blank');
+        $a->setAttribute('rel', 'noopener noreferrer');
+    }
+
+    $inner = '';
+    foreach ($best->childNodes as $c) {
+        $inner .= $doc->saveHTML($c);
+    }
+    $inner = clean_html($inner);
+
+    return [
+        'title' => $title ?: null,
+        'html'  => trim($inner),
+    ];
+}
+
+function absolutize_url(string $base, string $href): string {
+    if ($href === '' || preg_match('#^(https?:|data:|mailto:|tel:)#i', $href)) return $href;
+    $parts = parse_url($base);
+    if (!$parts || empty($parts['host'])) return $href;
+    $scheme = $parts['scheme'] ?? 'https';
+    $host   = $parts['host'];
+    $port   = isset($parts['port']) ? ':' . $parts['port'] : '';
+    if (str_starts_with($href, '//')) return $scheme . ':' . $href;
+    if (str_starts_with($href, '/'))  return $scheme . '://' . $host . $port . $href;
+    $path = $parts['path'] ?? '/';
+    $dir  = preg_replace('#/[^/]*$#', '/', $path);
+    return $scheme . '://' . $host . $port . $dir . $href;
+}
+
 function feed_id(string $url): string {
     return substr(hash('sha256', $url), 0, 16);
 }
@@ -229,6 +347,17 @@ try {
             'parsed_item_count'=> count($parsed['items'] ?? []),
             'parsed_first_item'=> $sample,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($method === 'GET' && $action === 'article') {
+        $url = trim((string)($_GET['url'] ?? ''));
+        if (!filter_var($url, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url)) {
+            fail(400, 'Ungültige URL');
+        }
+        $art = extract_article($url);
+        if (!$art) fail(422, 'Konnte den Artikel nicht extrahieren');
+        echo json_encode($art, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         exit;
     }
 
