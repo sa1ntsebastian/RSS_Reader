@@ -210,6 +210,15 @@ label,
   border-left-color: var(--accent);
   background: var(--panel-2);
 }
+.folder-header.drag-over {
+  background: rgba(244, 184, 134, 0.15);
+  border-left-color: var(--accent);
+  color: var(--white);
+}
+.folder-header.dragging { opacity: 0.4; }
+.feed-item.drop-folder { /* highlight feed-items that would land in folder */
+  border-top: 2px solid var(--accent);
+}
 .folder-header .count {
   font-size: 0.7rem;
   font-weight: 600;
@@ -360,7 +369,7 @@ label,
 
 .entry .star-btn {
   position: absolute;
-  top: 12px; right: 50px;
+  top: 50px; right: 12px;
   background: transparent; border: 0; padding: 4px;
   color: rgba(245, 245, 247, 0.25);
   display: inline-flex; align-items: center; justify-content: center;

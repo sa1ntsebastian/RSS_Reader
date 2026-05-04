@@ -129,6 +129,66 @@
   }
 
   // ---------- sidebar ----------
+  function setDragPayload(e, payload) {
+    try { e.dataTransfer.setData('application/x-rss-drag', JSON.stringify(payload)); } catch {}
+    e.dataTransfer.setData('text/plain', JSON.stringify(payload));
+  }
+  function getDragPayload(e) {
+    let raw = '';
+    try { raw = e.dataTransfer.getData('application/x-rss-drag'); } catch {}
+    if (!raw) raw = e.dataTransfer.getData('text/plain');
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return { kind: 'feed', id: raw }; } // legacy
+  }
+
+  async function assignFeedToFolder(feedId, folder) {
+    const f = state.feeds.find(x => x.id === feedId);
+    if (!f) return;
+    if ((f.folder || '') === folder) return;
+    f.folder = folder;
+    renderFeeds();
+    try { await api('feed-update', { method: 'POST', body: { id: feedId, folder } }); } catch (e) { console.warn(e); }
+  }
+
+  async function moveFolderToFolder(srcFolder, dstFolder) {
+    if (srcFolder === dstFolder) return;
+    const ids = [];
+    const srcIds = []; // feeds we're moving
+    let dstStartIdx = -1;
+    state.feeds.forEach(f => {
+      const fld = (f.folder || '').trim();
+      if (fld === srcFolder) srcIds.push(f.id);
+    });
+    if (!srcIds.length) return;
+    const remaining = state.feeds.filter(f => !srcIds.includes(f.id));
+    // Insert before the first feed of destination folder
+    let inserted = false;
+    const out = [];
+    for (const f of remaining) {
+      if (!inserted && (f.folder || '').trim() === dstFolder) {
+        for (const id of srcIds) out.push(state.feeds.find(x => x.id === id));
+        inserted = true;
+      }
+      out.push(f);
+    }
+    if (!inserted) for (const id of srcIds) out.push(state.feeds.find(x => x.id === id));
+    state.feeds = out;
+    renderFeeds();
+    try { await api('reorder', { method: 'POST', body: { ids: state.feeds.map(f => f.id) } }); }
+    catch (e) { console.warn(e); }
+  }
+
+  function attachDropTarget(el, accept) {
+    el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const data = getDragPayload(e);
+      if (data) accept(data);
+    });
+  }
+
   function renderFeeds() {
     const counts = unreadCounts();
     els.feedList.innerHTML = '';
@@ -137,16 +197,23 @@
     all.className = 'feed-item' + (state.activeId === 'all' ? ' active' : '');
     all.innerHTML = `<span class="title">Alle Artikel</span>${countBadge(counts.all)}`;
     all.onclick = () => selectFeed('all');
+    // Drop a feed here to remove it from its folder
+    attachDropTarget(all, (data) => {
+      if (data.kind === 'feed') assignFeedToFolder(data.id, '');
+    });
     els.feedList.appendChild(all);
 
+    // Use insertion order from the feeds array so drag-reorder takes effect.
+    // Empty-folder ('no folder') feeds always render first.
     const byFolder = new Map();
+    byFolder.set('', []);
     for (const f of state.feeds) {
       const fld = (f.folder || '').trim();
       if (!byFolder.has(fld)) byFolder.set(fld, []);
       byFolder.get(fld).push(f);
     }
+    if (!byFolder.get('').length) byFolder.delete('');
     const folderNames = [...byFolder.keys()];
-    folderNames.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
 
     for (const folder of folderNames) {
       if (folder !== '') {
@@ -155,6 +222,16 @@
         h.className = 'folder-header' + (state.activeId === folderId ? ' active' : '');
         h.innerHTML = `<span class="title">${escapeHtml(folder)}</span>${countBadge(counts.folders[folder] || 0)}`;
         h.onclick = () => selectFeed(folderId);
+        h.draggable = true;
+        h.addEventListener('dragstart', (e) => {
+          setDragPayload(e, { kind: 'folder', name: folder });
+          h.classList.add('dragging');
+        });
+        h.addEventListener('dragend', () => h.classList.remove('dragging'));
+        attachDropTarget(h, (data) => {
+          if (data.kind === 'feed')   assignFeedToFolder(data.id, folder);
+          else if (data.kind === 'folder' && data.name !== folder) moveFolderToFolder(data.name, folder);
+        });
         els.feedList.appendChild(h);
       }
       for (const f of byFolder.get(folder)) {
@@ -176,19 +253,28 @@
           e.stopPropagation();
           if (confirm(`„${f.title}" entfernen?`)) removeFeed(f.id);
         };
-        // Drag & drop reorder
+        // Drag & drop: reorder, or drop folder onto a feed = put folder before this feed's group
         el.addEventListener('dragstart', (e) => {
-          e.dataTransfer.setData('text/plain', f.id);
+          setDragPayload(e, { kind: 'feed', id: f.id });
           el.classList.add('dragging');
         });
         el.addEventListener('dragend', () => el.classList.remove('dragging'));
-        el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
-        el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
-        el.addEventListener('drop', (e) => {
-          e.preventDefault();
-          el.classList.remove('drag-over');
-          const dragged = e.dataTransfer.getData('text/plain');
-          if (dragged && dragged !== f.id) reorderTo(dragged, f.id);
+        attachDropTarget(el, (data) => {
+          if (data.kind === 'feed' && data.id !== f.id) {
+            // If dragged feed currently belongs to a different folder, drop also
+            // moves it into THIS feed's folder
+            const dragged = state.feeds.find(x => x.id === data.id);
+            const targetFolder = (f.folder || '').trim();
+            if (dragged && (dragged.folder || '').trim() !== targetFolder) {
+              dragged.folder = targetFolder;
+              api('feed-update', { method: 'POST', body: { id: dragged.id, folder: targetFolder } }).catch(() => {});
+            }
+            reorderTo(data.id, f.id);
+          } else if (data.kind === 'folder') {
+            // Dropping a folder onto a feed → move folder right before this feed
+            const fld = (f.folder || '').trim();
+            if (fld && fld !== data.name) moveFolderToFolder(data.name, fld);
+          }
         });
         els.feedList.appendChild(el);
       }
