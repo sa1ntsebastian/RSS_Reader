@@ -5,6 +5,7 @@ require __DIR__ . '/auth.php';
 
 $DATA_DIR     = __DIR__ . '/data';
 $FEEDS_FILE   = $DATA_DIR . '/feeds.json';
+$FOLDERS_FILE = $DATA_DIR . '/folders.json';
 $STATE_FILE   = $DATA_DIR . '/state.json';
 $SETTINGS_FILE= $DATA_DIR . '/settings.json';
 $CACHE_DIR    = $DATA_DIR . '/cache';
@@ -404,6 +405,25 @@ function decorate_feed(array $f): array {
     return $f;
 }
 
+function load_folders(string $file): array {
+    $list = load_json($file, []);
+    return array_values(array_filter(array_map('strval', $list), fn($s) => $s !== ''));
+}
+function save_folders(string $file, array $folders): void {
+    $folders = array_values(array_unique(array_map(fn($s) => trim((string)$s), $folders)));
+    $folders = array_values(array_filter($folders, fn($s) => $s !== ''));
+    save_json($file, $folders);
+}
+function ensure_folder(string $file, string $name): void {
+    $name = trim($name);
+    if ($name === '') return;
+    $list = load_folders($file);
+    if (!in_array($name, $list, true)) {
+        $list[] = $name;
+        save_folders($file, $list);
+    }
+}
+
 // ---------- routing ----------
 
 $body = json_decode(file_get_contents('php://input') ?: 'null', true);
@@ -449,7 +469,73 @@ try {
 
     if ($method === 'GET' && $action === 'list') {
         $feeds = array_map('decorate_feed', load_json($FEEDS_FILE));
-        echo json_encode(['feeds' => $feeds]);
+        $folders = load_folders($FOLDERS_FILE);
+        // Auto-include any folder referenced by a feed but missing from the explicit list
+        foreach ($feeds as $f) {
+            $fld = (string)($f['folder'] ?? '');
+            if ($fld !== '' && !in_array($fld, $folders, true)) $folders[] = $fld;
+        }
+        save_folders($FOLDERS_FILE, $folders);
+        echo json_encode(['feeds' => $feeds, 'folders' => $folders]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'folder-create') {
+        $name = trim((string)($body['name'] ?? ''));
+        if ($name === '') fail(400, 'Ordnername fehlt');
+        ensure_folder($FOLDERS_FILE, $name);
+        echo json_encode(['ok' => true, 'folders' => load_folders($FOLDERS_FILE)]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'folder-delete') {
+        $name = trim((string)($body['name'] ?? ''));
+        if ($name === '') fail(400, 'Ordnername fehlt');
+        $folders = array_values(array_filter(load_folders($FOLDERS_FILE), fn($f) => $f !== $name));
+        save_folders($FOLDERS_FILE, $folders);
+        // Detach feeds from the deleted folder (keep the feeds themselves)
+        $feeds = load_json($FEEDS_FILE);
+        foreach ($feeds as &$f) if (($f['folder'] ?? '') === $name) $f['folder'] = '';
+        unset($f);
+        save_json($FEEDS_FILE, $feeds);
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'folder-rename') {
+        $from = trim((string)($body['from'] ?? ''));
+        $to   = trim((string)($body['to']   ?? ''));
+        if ($from === '' || $to === '') fail(400, 'Namen fehlen');
+        $folders = load_folders($FOLDERS_FILE);
+        $idx = array_search($from, $folders, true);
+        if ($idx === false) fail(404, 'Ordner nicht gefunden');
+        // If $to already exists, just merge: drop $from and rename feeds
+        if (in_array($to, $folders, true)) {
+            array_splice($folders, $idx, 1);
+        } else {
+            $folders[$idx] = $to;
+        }
+        save_folders($FOLDERS_FILE, $folders);
+        $feeds = load_json($FEEDS_FILE);
+        foreach ($feeds as &$f) if (($f['folder'] ?? '') === $from) $f['folder'] = $to;
+        unset($f);
+        save_json($FEEDS_FILE, $feeds);
+        echo json_encode(['ok' => true, 'folders' => $folders]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'folders-reorder') {
+        $names = (array)($body['names'] ?? []);
+        $known = load_folders($FOLDERS_FILE);
+        $sorted = [];
+        foreach ($names as $n) {
+            $n = trim((string)$n);
+            if ($n !== '' && in_array($n, $known, true) && !in_array($n, $sorted, true)) $sorted[] = $n;
+        }
+        // Append any folder we still know about that wasn't included
+        foreach ($known as $n) if (!in_array($n, $sorted, true)) $sorted[] = $n;
+        save_folders($FOLDERS_FILE, $sorted);
+        echo json_encode(['ok' => true, 'folders' => $sorted]);
         exit;
     }
 
@@ -552,14 +638,16 @@ try {
         if (!empty($parsed['error'])) fail(502, 'Feed konnte nicht geladen werden (' . $parsed['error'] . ')');
         if (empty($parsed['items']) && empty($parsed['title'])) fail(422, 'Konnte Feed nicht parsen');
 
+        $folder = trim((string)($body['folder'] ?? ''));
         $feeds[] = [
             'id'     => $id,
             'url'    => $url,
             'title'  => $parsed['title'] ?: $url,
-            'folder' => (string)($body['folder'] ?? ''),
+            'folder' => $folder,
             'added'  => time(),
         ];
         save_json($FEEDS_FILE, $feeds);
+        if ($folder !== '') ensure_folder($FOLDERS_FILE, $folder);
         echo json_encode(['ok' => true, 'feed' => decorate_feed(end($feeds))]);
         exit;
     }
@@ -577,15 +665,17 @@ try {
         $id = (string)($body['id'] ?? '');
         $feeds = load_json($FEEDS_FILE);
         $found = false;
+        $newFolder = null;
         foreach ($feeds as &$f) {
             if ($f['id'] !== $id) continue;
             if (isset($body['title']))  $f['title']  = trim((string)$body['title']) ?: $f['title'];
-            if (isset($body['folder'])) $f['folder'] = trim((string)$body['folder']);
+            if (isset($body['folder'])) { $f['folder'] = trim((string)$body['folder']); $newFolder = $f['folder']; }
             $found = true; break;
         }
         unset($f);
         if (!$found) fail(404, 'Feed nicht gefunden');
         save_json($FEEDS_FILE, $feeds);
+        if ($newFolder !== null && $newFolder !== '') ensure_folder($FOLDERS_FILE, $newFolder);
         echo json_encode(['ok' => true]);
         exit;
     }

@@ -43,6 +43,16 @@ require_login_html();
       <button type="submit" title="Feed hinzufügen">+</button>
     </form>
 
+    <div class="sidebar-tools">
+      <button id="btn-new-folder" type="button" title="Neuer Ordner">
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 11v6M9 14h6"/>
+        </svg>
+        <span>neuer ordner</span>
+      </button>
+    </div>
+
     <nav id="feed-list"></nav>
 
     <footer>

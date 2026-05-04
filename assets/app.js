@@ -25,10 +25,12 @@
     btnSave:    document.getElementById('btn-save'),
     btnExport:  document.getElementById('btn-export'),
     opmlFile:   document.getElementById('opml-file'),
+    btnNewFolder: document.getElementById('btn-new-folder'),
   };
 
   const state = {
     feeds:    [],
+    folders:  [],
     activeId: 'all',
     items:    [],
     read:     new Set(),
@@ -146,37 +148,71 @@
     if (!f) return;
     if ((f.folder || '') === folder) return;
     f.folder = folder;
+    if (folder && !state.folders.includes(folder)) state.folders.push(folder);
     renderFeeds();
     try { await api('feed-update', { method: 'POST', body: { id: feedId, folder } }); } catch (e) { console.warn(e); }
   }
 
-  async function moveFolderToFolder(srcFolder, dstFolder) {
-    if (srcFolder === dstFolder) return;
-    const ids = [];
-    const srcIds = []; // feeds we're moving
-    let dstStartIdx = -1;
-    state.feeds.forEach(f => {
-      const fld = (f.folder || '').trim();
-      if (fld === srcFolder) srcIds.push(f.id);
-    });
-    if (!srcIds.length) return;
-    const remaining = state.feeds.filter(f => !srcIds.includes(f.id));
-    // Insert before the first feed of destination folder
-    let inserted = false;
-    const out = [];
-    for (const f of remaining) {
-      if (!inserted && (f.folder || '').trim() === dstFolder) {
-        for (const id of srcIds) out.push(state.feeds.find(x => x.id === id));
-        inserted = true;
-      }
-      out.push(f);
+  async function createFolder() {
+    const name = prompt('Name des neuen Ordners:');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (trimmed === '') return;
+    if (state.folders.includes(trimmed)) {
+      selectFeed('folder:' + trimmed);
+      return;
     }
-    if (!inserted) for (const id of srcIds) out.push(state.feeds.find(x => x.id === id));
-    state.feeds = out;
+    state.folders.push(trimmed);
     renderFeeds();
-    try { await api('reorder', { method: 'POST', body: { ids: state.feeds.map(f => f.id) } }); }
+    try { await api('folder-create', { method: 'POST', body: { name: trimmed } }); }
+    catch (e) { alert('Konnte Ordner nicht anlegen: ' + e.message); }
+  }
+
+  async function renameFolder(oldName) {
+    const name = prompt(`Ordner umbenennen:`, oldName);
+    if (name === null) return;
+    const to = name.trim();
+    if (to === '' || to === oldName) return;
+    try {
+      await api('folder-rename', { method: 'POST', body: { from: oldName, to } });
+      if (state.activeId === 'folder:' + oldName) state.activeId = 'folder:' + to;
+      await loadFeeds();
+      renderFeeds();
+      renderItems();
+    } catch (e) { alert('Umbenennen fehlgeschlagen: ' + e.message); }
+  }
+
+  async function deleteFolder(name) {
+    const c = state.feeds.filter(f => (f.folder || '') === name).length;
+    const msg = c > 0
+      ? `Ordner „${name}" löschen? Die ${c} Feeds darin bleiben erhalten (ohne Ordner).`
+      : `Leeren Ordner „${name}" löschen?`;
+    if (!confirm(msg)) return;
+    try {
+      await api('folder-delete', { method: 'POST', body: { name } });
+      if (state.activeId === 'folder:' + name) state.activeId = 'all';
+      await loadFeeds();
+      renderFeeds();
+      renderItems();
+    } catch (e) { alert('Löschen fehlgeschlagen: ' + e.message); }
+  }
+
+  async function moveFolderInList(srcFolder, dstFolder) {
+    if (srcFolder === dstFolder) return;
+    const list = [...state.folders];
+    const from = list.indexOf(srcFolder);
+    const to   = list.indexOf(dstFolder);
+    if (from < 0 || to < 0) return;
+    list.splice(from, 1);
+    list.splice(to, 0, srcFolder);
+    state.folders = list;
+    renderFeeds();
+    try { await api('folders-reorder', { method: 'POST', body: { names: list } }); }
     catch (e) { console.warn(e); }
   }
+
+  // Folder reorder is now an explicit folder list operation.
+  const moveFolderToFolder = moveFolderInList;
 
   function attachDropTarget(el, accept) {
     el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
@@ -203,10 +239,12 @@
     });
     els.feedList.appendChild(all);
 
-    // Use insertion order from the feeds array so drag-reorder takes effect.
-    // Empty-folder ('no folder') feeds always render first.
+    // Folder display order is the explicit list from the server; empty-folder
+    // ('no folder') feeds render first. Any folder still referenced by a feed
+    // but missing from the explicit list is appended.
     const byFolder = new Map();
     byFolder.set('', []);
+    for (const name of state.folders) byFolder.set(name, []);
     for (const f of state.feeds) {
       const fld = (f.folder || '').trim();
       if (!byFolder.has(fld)) byFolder.set(fld, []);
@@ -220,8 +258,15 @@
         const folderId = 'folder:' + folder;
         const h = document.createElement('div');
         h.className = 'folder-header' + (state.activeId === folderId ? ' active' : '');
-        h.innerHTML = `<span class="title">${escapeHtml(folder)}</span>${countBadge(counts.folders[folder] || 0)}`;
-        h.onclick = () => selectFeed(folderId);
+        h.innerHTML = `
+          <span class="title">${escapeHtml(folder)}</span>
+          ${countBadge(counts.folders[folder] || 0)}
+          <button class="folder-rename" title="Umbenennen" aria-label="Umbenennen">✎</button>
+          <button class="folder-delete" title="Ordner löschen" aria-label="Ordner löschen">×</button>`;
+        h.querySelector('.title').onclick = () => selectFeed(folderId);
+        h.querySelector('.count').onclick = () => selectFeed(folderId);
+        h.querySelector('.folder-rename').onclick = (e) => { e.stopPropagation(); renameFolder(folder); };
+        h.querySelector('.folder-delete').onclick = (e) => { e.stopPropagation(); deleteFolder(folder); };
         h.draggable = true;
         h.addEventListener('dragstart', (e) => {
           setDragPayload(e, { kind: 'folder', name: folder });
@@ -284,8 +329,9 @@
   async function promptFolder(f) {
     const v = prompt(`Ordner für „${f.title}" (leer = ohne Ordner):`, f.folder || '');
     if (v === null) return;
-    await api('feed-update', { method: 'POST', body: { id: f.id, folder: v } });
+    await api('feed-update', { method: 'POST', body: { id: f.id, folder: v.trim() } });
     await loadFeeds();
+    renderFeeds();
     renderItems();
   }
 
@@ -432,10 +478,14 @@
         if (els.hideRead.checked && isRead && !state.starred.has(it.guid)) li.remove();
       };
       li.addEventListener('click', (e) => {
-        if (!li.classList.contains('article-loaded') || !li.classList.contains('open')) return;
+        // Ignore clicks on actionable controls or while a selection is active
         if (e.target.closest('a, button, input, textarea, select, label')) return;
         if (window.getSelection && String(window.getSelection()).length > 0) return;
-        closeAndMarkRead();
+        if (li.classList.contains('article-loaded') && li.classList.contains('open')) {
+          closeAndMarkRead();
+        } else {
+          openArticle();
+        }
       });
 
       els.items.appendChild(li);
@@ -446,7 +496,8 @@
   // ---------- actions ----------
   async function loadFeeds() {
     const data = await api('list');
-    state.feeds = data.feeds || [];
+    state.feeds   = data.feeds   || [];
+    state.folders = data.folders || [];
   }
   async function loadState() {
     const s = await api('state');
@@ -643,6 +694,7 @@
   });
   els.refresh.addEventListener('click', () => refreshAll());
   els.markAll.addEventListener('click', markAllRead);
+  els.btnNewFolder.addEventListener('click', createFolder);
   els.hideRead.addEventListener('change', renderItems);
   els.onlyStar.addEventListener('change', renderItems);
 
