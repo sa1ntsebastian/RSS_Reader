@@ -33,6 +33,7 @@
       init.body = JSON.stringify(opts.body);
     }
     const r = await fetch(url, init);
+    if (r.status === 401) { window.location.href = 'login.php'; throw new Error('not authenticated'); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     return data;

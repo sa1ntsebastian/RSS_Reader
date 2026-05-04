@@ -1,5 +1,6 @@
 <?php
-// Main UI – single page; data is fetched via api.php
+require __DIR__ . '/auth.php';
+require_login_html();
 ?>
 <!doctype html>
 <html lang="de">
@@ -13,7 +14,15 @@
   <aside id="sidebar">
     <header class="brand">
       <h1>RSS</h1>
-      <button id="btn-refresh" title="Alle Feeds aktualisieren">&#x21bb;</button>
+      <div class="brand-actions">
+        <button id="btn-refresh" title="Alle Feeds aktualisieren">&#x21bb;</button>
+        <a id="btn-logout" href="logout.php" title="Abmelden" aria-label="Abmelden">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              d="M15 17l5-5-5-5M20 12H9M12 19a7 7 0 1 1 0-14"/>
+          </svg>
+        </a>
+      </div>
     </header>
 
     <form id="add-form" autocomplete="off">

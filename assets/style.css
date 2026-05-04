@@ -100,18 +100,28 @@ label,
   letter-spacing: 0.08em;
   color: var(--white);
 }
-.brand button {
+.brand-actions { display: flex; gap: 6px; align-items: center; }
+.brand button,
+.brand a#btn-logout {
+  display: inline-flex; align-items: center; justify-content: center;
   background: transparent;
   border: 1px solid var(--border);
   color: var(--white);
   width: 34px; height: 34px; border-radius: 50%;
   font-size: 18px; line-height: 1;
+  text-decoration: none;
   transition: background .15s, color .15s, border-color .15s;
 }
 .brand button:hover {
   background: var(--accent);
   color: var(--green);
   border-color: var(--accent);
+}
+.brand a#btn-logout:hover {
+  background: var(--pastel-coral);
+  color: var(--green);
+  border-color: var(--pastel-coral);
+  text-decoration: none;
 }
 
 #add-form {

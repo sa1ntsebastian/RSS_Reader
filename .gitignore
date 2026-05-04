@@ -1,4 +1,5 @@
 data/feeds.json
 data/cache/
+config.php
 *.log
 .DS_Store

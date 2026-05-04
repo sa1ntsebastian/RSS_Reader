@@ -12,6 +12,9 @@ declare(strict_types=1);
  *   POST api.php?action=refresh [{id}]        -> refresh one or all feeds
  */
 
+require __DIR__ . '/auth.php';
+require_login_api();
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 
