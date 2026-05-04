@@ -114,11 +114,13 @@
 
   // ---------- counts ----------
   function unreadCounts() {
-    const counts = { all: 0 };
+    const counts = { all: 0, folders: {} };
     for (const it of state.items) {
       if (state.read.has(it.guid)) continue;
       counts.all++;
       counts[it.feedId] = (counts[it.feedId] || 0) + 1;
+      const fld = (it.folder || '').trim();
+      if (fld) counts.folders[fld] = (counts.folders[fld] || 0) + 1;
     }
     return counts;
   }
@@ -148,9 +150,11 @@
 
     for (const folder of folderNames) {
       if (folder !== '') {
+        const folderId = 'folder:' + folder;
         const h = document.createElement('div');
-        h.className = 'folder-header';
-        h.textContent = folder;
+        h.className = 'folder-header' + (state.activeId === folderId ? ' active' : '');
+        h.innerHTML = `<span class="title">${escapeHtml(folder)}</span>${countBadge(counts.folders[folder] || 0)}`;
+        h.onclick = () => selectFeed(folderId);
         els.feedList.appendChild(h);
       }
       for (const f of byFolder.get(folder)) {
@@ -215,7 +219,12 @@
   function filteredItems() {
     const q = (els.search.value || '').trim().toLowerCase();
     let items = state.items;
-    if (state.activeId !== 'all') items = items.filter(i => i.feedId === state.activeId);
+    if (state.activeId.startsWith('folder:')) {
+      const folder = state.activeId.slice(7);
+      items = items.filter(i => (i.folder || '').trim() === folder);
+    } else if (state.activeId !== 'all') {
+      items = items.filter(i => i.feedId === state.activeId);
+    }
     if (els.onlyStar.checked) items = items.filter(i => state.starred.has(i.guid));
     if (els.hideRead.checked) items = items.filter(i => !state.read.has(i.guid) || state.starred.has(i.guid));
     if (q) {
@@ -376,8 +385,14 @@
 
   function selectFeed(id) {
     state.activeId = id;
-    const f = state.feeds.find(x => x.id === id);
-    els.current.textContent = f ? f.title : 'Alle Artikel';
+    let title = 'Alle Artikel';
+    if (id.startsWith('folder:')) {
+      title = id.slice(7);
+    } else if (id !== 'all') {
+      const f = state.feeds.find(x => x.id === id);
+      if (f) title = f.title;
+    }
+    els.current.textContent = title;
     renderFeeds();
     renderItems();
     window.scrollTo({ top: 0 });

@@ -189,12 +189,41 @@ label,
 .feed-item.dragging { opacity: 0.4; }
 .feed-item.drag-over { border-top: 2px solid var(--accent); }
 .folder-header {
+  display: flex; align-items: center; gap: 8px;
   font-family: "etoile", -apple-system, sans-serif;
   text-transform: lowercase; letter-spacing: 0.06em;
   color: var(--muted);
-  font-size: 0.78rem;
-  padding: 14px 18px 4px;
+  font-size: 0.82rem;
+  padding: 14px 18px 6px;
   user-select: none;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: color .15s, background .15s;
+}
+.folder-header .title {
+  flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.folder-header:hover { color: var(--white); background: var(--panel); }
+.folder-header.active {
+  color: var(--white);
+  border-left-color: var(--accent);
+  background: var(--panel-2);
+}
+.folder-header .count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--accent);
+  padding: 1px 7px;
+  border-radius: 999px;
+  min-width: 20px;
+  text-align: center;
+}
+.folder-header .count.zero {
+  background: transparent;
+  color: var(--muted);
+  font-weight: 400;
 }
 .feed-item .count {
   font-family: "etoile", -apple-system, sans-serif;

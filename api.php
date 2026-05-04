@@ -493,9 +493,12 @@ try {
         elseif ($op === 'unstar')      $apply($state['starred'], $guids, false);
         elseif ($op === 'mark-all-read') {
             $feedId = (string)($body['feedId'] ?? 'all');
+            $folder = null;
+            if (str_starts_with($feedId, 'folder:')) { $folder = substr($feedId, 7); $feedId = 'all'; }
             $feeds  = load_json($FEEDS_FILE);
             foreach ($feeds as $f) {
                 if ($feedId !== 'all' && $f['id'] !== $feedId) continue;
+                if ($folder !== null && (string)($f['folder'] ?? '') !== $folder) continue;
                 $cache = json_decode((string)@file_get_contents(cache_path($CACHE_DIR, $f['id'])), true);
                 foreach (($cache['items'] ?? []) as $it) {
                     if (!empty($it['guid'])) $state['read'][] = (string)$it['guid'];
