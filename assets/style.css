@@ -19,6 +19,8 @@
   --accent:  var(--pastel-orange);
   --accent-2: var(--stronger-turquoise);
   --link:    var(--pastel-violet);
+  --header-h: 64px;     /* sticky content-header total height */
+  --pill-top: 84px;     /* where the 'X neue Artikel' pill sticks */
 }
 
 @font-face {
@@ -83,9 +85,13 @@ label,
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* dvh = the *visible* viewport (handles iOS Safari URL bar correctly) */
+  height: 100dvh;
+  max-height: 100dvh;
   position: sticky;
   top: 0;
+  align-self: start;     /* don't stretch with the grid row */
+  z-index: 10;
   user-select: none;
 }
 
@@ -317,11 +323,15 @@ label,
 #content-header {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; flex-wrap: wrap;
-  margin-bottom: 20px;
+  margin: 0 -36px 12px;     /* extend bg to the edges of the green column */
+  padding: 14px 36px;
+  min-height: var(--header-h);
   position: sticky; top: 0; z-index: 5;
   background: var(--bg);
-  padding-top: 4px; padding-bottom: 12px;
-  border-bottom: 1px solid transparent;
+  /* Explicit solid color so nothing peeks through */
+  background-color: #175d3b;
+  /* Soft fade below header to mask any sub-pixel seam */
+  box-shadow: 0 8px 12px -8px rgba(0, 0, 0, 0.35);
 }
 .content-titles { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .content-actions { display: flex; align-items: center; gap: 8px; }
@@ -366,7 +376,7 @@ label,
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
   position: sticky;
-  top: 70px;
+  top: calc(var(--header-h) + 8px);
   z-index: 6;
   transition: opacity .2s, transform .2s;
 }
@@ -383,12 +393,12 @@ label,
   font-size: 1.05rem;
   color: var(--accent);
   margin: 24px 0 10px;
-  padding: 6px 0 4px;
+  padding: 6px 4px 4px;
   border-bottom: 1px solid var(--border);
   user-select: none;
   position: sticky;
-  top: 60px;
-  background: var(--bg);
+  top: var(--header-h);
+  background: #175d3b;
   z-index: 4;
 }
 #items .day-header:first-child { margin-top: 0; }

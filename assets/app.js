@@ -27,6 +27,7 @@
     opmlFile:   document.getElementById('opml-file'),
     btnNewFolder: document.getElementById('btn-new-folder'),
     newPill:    document.getElementById('new-pill'),
+    contentHeader: document.getElementById('content-header'),
   };
 
   const COLLAPSED_KEY = 'rss.collapsedFolders';
@@ -46,6 +47,17 @@
     document.body.dataset.readSize  = String(readMode.size);
   }
   applyReadMode();
+
+  function syncHeaderHeight() {
+    const h = els.contentHeader?.getBoundingClientRect().height || 64;
+    document.documentElement.style.setProperty('--header-h', Math.ceil(h) + 'px');
+  }
+  window.addEventListener('resize', syncHeaderHeight);
+  if (window.ResizeObserver && els.contentHeader) {
+    new ResizeObserver(syncHeaderHeight).observe(els.contentHeader);
+  }
+  // initial measurement happens after render flush
+  requestAnimationFrame(syncHeaderHeight);
   const state = {
     feeds:    [],
     folders:  [],
