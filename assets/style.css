@@ -53,6 +53,8 @@ a:hover { text-decoration: underline; }
 .entry.article-loaded.open a,
 .entry.article-loaded.open button,
 .entry.article-loaded.open .open-original { cursor: pointer; }
+/* Empty space inside the open card invites a click to close */
+.entry.article-loaded.open { cursor: zoom-out; }
 
 .etoile,
 .brand h1,

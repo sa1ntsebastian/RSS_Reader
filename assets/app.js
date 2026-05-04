@@ -166,6 +166,15 @@
         if (els.hideRead.checked && isRead) li.remove();
       };
 
+      // Click anywhere in an open article (except on links/buttons or while
+      // a text selection is active) closes it and marks it read.
+      li.addEventListener('click', (e) => {
+        if (!li.classList.contains('article-loaded') || !li.classList.contains('open')) return;
+        if (e.target.closest('a, button, input, textarea, select, label')) return;
+        if (window.getSelection && String(window.getSelection()).length > 0) return;
+        closeAndMarkRead();
+      });
+
       els.items.appendChild(li);
     }
   }
