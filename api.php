@@ -1,0 +1,219 @@
+<?php
+declare(strict_types=1);
+
+/**
+ * Tiny JSON API for the RSS reader.
+ *
+ * Endpoints:
+ *   GET  api.php?action=list                  -> list of feeds
+ *   GET  api.php?action=items&id=<feedId>     -> items of one feed (or all if id=all)
+ *   POST api.php?action=add     {url}         -> add feed
+ *   POST api.php?action=remove  {id}          -> remove feed
+ *   POST api.php?action=refresh [{id}]        -> refresh one or all feeds
+ */
+
+header('Content-Type: application/json; charset=utf-8');
+header('X-Content-Type-Options: nosniff');
+
+$DATA_DIR   = __DIR__ . '/data';
+$FEEDS_FILE = $DATA_DIR . '/feeds.json';
+$CACHE_DIR  = $DATA_DIR . '/cache';
+$CACHE_TTL  = 15 * 60; // seconds
+
+if (!is_dir($DATA_DIR))  @mkdir($DATA_DIR, 0775, true);
+if (!is_dir($CACHE_DIR)) @mkdir($CACHE_DIR, 0775, true);
+
+function fail(int $code, string $msg): void {
+    http_response_code($code);
+    echo json_encode(['error' => $msg]);
+    exit;
+}
+
+function load_feeds(string $file): array {
+    if (!is_file($file)) return [];
+    $raw = file_get_contents($file);
+    $data = json_decode($raw, true);
+    return is_array($data) ? $data : [];
+}
+
+function save_feeds(string $file, array $feeds): void {
+    $tmp = $file . '.tmp';
+    file_put_contents($tmp, json_encode($feeds, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    rename($tmp, $file);
+}
+
+function http_get(string $url): ?string {
+    $ctx = stream_context_create([
+        'http' => [
+            'method'        => 'GET',
+            'timeout'       => 10,
+            'follow_location'=> 1,
+            'max_redirects' => 5,
+            'header'        => "User-Agent: SimpleRSSReader/1.0\r\nAccept: application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5\r\n",
+            'ignore_errors' => true,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+    $body = @file_get_contents($url, false, $ctx);
+    return $body === false ? null : $body;
+}
+
+function parse_feed(string $xml): array {
+    libxml_use_internal_errors(true);
+    $sx = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NOCDATA | LIBXML_NONET);
+    if (!$sx) return ['title' => null, 'items' => []];
+
+    $items = [];
+    $title = null;
+
+    // RSS 2.0
+    if (isset($sx->channel)) {
+        $title = (string)$sx->channel->title;
+        foreach ($sx->channel->item as $it) {
+            $items[] = [
+                'title'   => trim((string)$it->title),
+                'link'    => trim((string)$it->link),
+                'date'    => strtotime((string)$it->pubDate) ?: time(),
+                'summary' => clean_html((string)($it->description ?? '')),
+                'guid'    => (string)($it->guid ?? $it->link ?? $it->title),
+            ];
+        }
+    } else {
+        // Atom
+        $title = (string)$sx->title;
+        foreach ($sx->entry as $it) {
+            $link = '';
+            foreach ($it->link as $l) {
+                $rel = (string)$l['rel'];
+                if ($rel === '' || $rel === 'alternate') { $link = (string)$l['href']; break; }
+            }
+            $date = (string)($it->updated ?? $it->published ?? '');
+            $items[] = [
+                'title'   => trim((string)$it->title),
+                'link'    => $link,
+                'date'    => $date ? (strtotime($date) ?: time()) : time(),
+                'summary' => clean_html((string)($it->summary ?? $it->content ?? '')),
+                'guid'    => (string)($it->id ?? $link ?? $it->title),
+            ];
+        }
+    }
+
+    usort($items, fn($a, $b) => $b['date'] <=> $a['date']);
+    return ['title' => $title ?: null, 'items' => $items];
+}
+
+function clean_html(string $html): string {
+    // Strip scripts/styles/iframes/onclick attributes; keep simple formatting + images.
+    $html = preg_replace('#<(script|style|iframe|object|embed|form)[^>]*>.*?</\1>#is', '', $html) ?? $html;
+    $html = preg_replace('#\son\w+\s*=\s*"[^"]*"#i', '', $html) ?? $html;
+    $html = preg_replace("#\son\w+\s*=\s*'[^']*'#i", '', $html) ?? $html;
+    $html = preg_replace('#javascript:#i', '', $html) ?? $html;
+    return $html;
+}
+
+function feed_id(string $url): string {
+    return substr(hash('sha256', $url), 0, 16);
+}
+
+function cache_path(string $cacheDir, string $id): string {
+    return $cacheDir . '/' . $id . '.json';
+}
+
+function fetch_and_cache(string $url, string $id, string $cacheDir): array {
+    $body = http_get($url);
+    if ($body === null) return ['title' => null, 'items' => [], 'error' => 'fetch failed'];
+    $parsed = parse_feed($body);
+    $parsed['fetched'] = time();
+    file_put_contents(cache_path($cacheDir, $id), json_encode($parsed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    return $parsed;
+}
+
+function get_cached(string $id, string $cacheDir, int $ttl, string $url): array {
+    $path = cache_path($cacheDir, $id);
+    if (is_file($path) && (time() - filemtime($path)) < $ttl) {
+        $data = json_decode((string)file_get_contents($path), true);
+        if (is_array($data)) return $data;
+    }
+    return fetch_and_cache($url, $id, $cacheDir);
+}
+
+$action = $_GET['action'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'];
+$body   = json_decode(file_get_contents('php://input') ?: 'null', true);
+
+try {
+    if ($method === 'GET' && $action === 'list') {
+        echo json_encode(['feeds' => load_feeds($FEEDS_FILE)]);
+        exit;
+    }
+
+    if ($method === 'GET' && $action === 'items') {
+        $id = $_GET['id'] ?? 'all';
+        $feeds = load_feeds($FEEDS_FILE);
+        $out = [];
+        foreach ($feeds as $f) {
+            if ($id !== 'all' && $f['id'] !== $id) continue;
+            $data = get_cached($f['id'], $CACHE_DIR, $CACHE_TTL, $f['url']);
+            foreach ($data['items'] ?? [] as $it) {
+                $it['feedId']    = $f['id'];
+                $it['feedTitle'] = $f['title'] ?? $f['url'];
+                $out[] = $it;
+            }
+        }
+        usort($out, fn($a, $b) => $b['date'] <=> $a['date']);
+        echo json_encode(['items' => $out]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'add') {
+        $url = trim((string)($body['url'] ?? ''));
+        if (!filter_var($url, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url)) {
+            fail(400, 'Ungültige URL');
+        }
+        $feeds = load_feeds($FEEDS_FILE);
+        $id = feed_id($url);
+        foreach ($feeds as $f) if ($f['id'] === $id) fail(409, 'Feed existiert bereits');
+
+        $parsed = fetch_and_cache($url, $id, $CACHE_DIR);
+        if (empty($parsed['items']) && empty($parsed['title'])) {
+            fail(422, 'Konnte Feed nicht parsen');
+        }
+        $feeds[] = [
+            'id'    => $id,
+            'url'   => $url,
+            'title' => $parsed['title'] ?: $url,
+            'added' => time(),
+        ];
+        save_feeds($FEEDS_FILE, $feeds);
+        echo json_encode(['ok' => true, 'feed' => end($feeds)]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'remove') {
+        $id = (string)($body['id'] ?? '');
+        $feeds = load_feeds($FEEDS_FILE);
+        $feeds = array_values(array_filter($feeds, fn($f) => $f['id'] !== $id));
+        save_feeds($FEEDS_FILE, $feeds);
+        @unlink(cache_path($CACHE_DIR, $id));
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
+    if ($method === 'POST' && $action === 'refresh') {
+        $id = (string)($body['id'] ?? 'all');
+        $feeds = load_feeds($FEEDS_FILE);
+        foreach ($feeds as &$f) {
+            if ($id !== 'all' && $f['id'] !== $id) continue;
+            $parsed = fetch_and_cache($f['url'], $f['id'], $CACHE_DIR);
+            if (!empty($parsed['title'])) $f['title'] = $parsed['title'];
+        }
+        unset($f);
+        save_feeds($FEEDS_FILE, $feeds);
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
+    fail(404, 'Unbekannte Aktion');
+} catch (Throwable $e) {
+    fail(500, 'Serverfehler: ' . $e->getMessage());
+}

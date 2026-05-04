@@ -1,0 +1,4 @@
+data/feeds.json
+data/cache/
+*.log
+.DS_Store
