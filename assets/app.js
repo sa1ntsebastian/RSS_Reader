@@ -99,65 +99,70 @@
       const li = document.createElement('li');
       li.className = 'entry' + (state.read.has(it.guid) ? ' read' : '');
       const date = new Date((it.date || 0) * 1000);
-      const hasSummary = !!(it.summary && it.summary.trim());
       li.innerHTML = `
+        <a class="open-original" href="${escapeAttr(it.link)}" target="_blank" rel="noopener noreferrer" title="Auf Originalseite öffnen" aria-label="Auf Originalseite öffnen">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              d="M14 4h6v6M20 4l-9 9M19 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>
+          </svg>
+        </a>
         <div class="entry-head">
           <span class="feed-name">${escapeHtml(it.feedTitle)}</span>
           <time datetime="${date.toISOString()}">${formatDate(date)}</time>
         </div>
-        <h3><a href="${escapeAttr(it.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title || '(ohne Titel)')}</a></h3>
-        <div class="summary">${hasSummary ? it.summary : ''}</div>
+        <h3><button class="title-btn" type="button">${escapeHtml(it.title || '(ohne Titel)')}</button></h3>
+        <div class="summary"></div>
         <div class="actions">
-          ${hasSummary ? '<button data-act="toggle">Vorschau</button>' : ''}
-          <button data-act="article">Im Reader lesen</button>
           <button data-act="read">${state.read.has(it.guid) ? 'Als ungelesen markieren' : 'Als gelesen markieren'}</button>
         </div>`;
+
       const summary = li.querySelector('.summary');
-      const toggleBtn = li.querySelector('[data-act="toggle"]');
-      if (toggleBtn) toggleBtn.onclick = () => {
-        li.classList.toggle('open');
-        if (li.classList.contains('open')) {
-          markRead(it.guid);
-          li.classList.add('read');
-          li.querySelector('[data-act="read"]').textContent = 'Als ungelesen markieren';
-        }
+      const titleBtn = li.querySelector('.title-btn');
+      const readBtn  = li.querySelector('[data-act="read"]');
+
+      const setReadLabel = () => {
+        readBtn.textContent = state.read.has(it.guid) ? 'Als ungelesen markieren' : 'Als gelesen markieren';
       };
-      const articleBtn = li.querySelector('[data-act="article"]');
-      articleBtn.onclick = async () => {
+
+      titleBtn.onclick = async () => {
+        // Toggle if already loaded
         if (li.classList.contains('article-loaded')) {
           li.classList.toggle('open');
           return;
         }
-        articleBtn.disabled = true;
-        const original = articleBtn.textContent;
-        articleBtn.textContent = 'Lädt …';
+        titleBtn.classList.add('loading');
         try {
           const data = await api('article', { query: { url: it.link } });
           summary.innerHTML = data.html || '<p><em>Kein Inhalt gefunden.</em></p>';
           li.classList.add('article-loaded', 'open');
           markRead(it.guid);
           li.classList.add('read');
-          li.querySelector('[data-act="read"]').textContent = 'Als ungelesen markieren';
-          articleBtn.textContent = 'Artikel ein-/ausblenden';
+          setReadLabel();
         } catch (e) {
-          articleBtn.textContent = original;
-          alert('Artikel konnte nicht geladen werden: ' + e.message);
+          // Fall back to the feed summary if extraction fails
+          if (it.summary && it.summary.trim()) {
+            summary.innerHTML = it.summary +
+              `<p><em>Vollartikel konnte nicht geladen werden — bitte „Auf Originalseite öffnen" nutzen.</em></p>`;
+            li.classList.add('article-loaded', 'open');
+            markRead(it.guid);
+            li.classList.add('read');
+            setReadLabel();
+          } else {
+            alert('Artikel konnte nicht geladen werden: ' + e.message);
+          }
         } finally {
-          articleBtn.disabled = false;
+          titleBtn.classList.remove('loading');
         }
       };
-      li.querySelector('[data-act="read"]').onclick = (e) => {
+
+      readBtn.onclick = () => {
         toggleRead(it.guid);
         const isRead = state.read.has(it.guid);
         li.classList.toggle('read', isRead);
-        e.target.textContent = isRead ? 'Als ungelesen markieren' : 'Als gelesen markieren';
+        setReadLabel();
         if (els.hideRead.checked && isRead) li.remove();
       };
-      // mark as read when the user clicks the title link
-      li.querySelector('h3 a').addEventListener('click', () => {
-        markRead(it.guid);
-        li.classList.add('read');
-      });
+
       els.items.appendChild(li);
     }
   }
