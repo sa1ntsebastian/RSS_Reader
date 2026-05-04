@@ -58,19 +58,38 @@
     els.status.textContent = msg || '';
   }
 
+  function unreadCounts() {
+    const counts = { all: 0 };
+    for (const it of state.items) {
+      if (state.read.has(it.guid)) continue;
+      counts.all++;
+      counts[it.feedId] = (counts[it.feedId] || 0) + 1;
+    }
+    return counts;
+  }
+
+  function countBadge(n) {
+    const cls = n > 0 ? 'count' : 'count zero';
+    return `<span class="${cls}">${n}</span>`;
+  }
+
   function renderFeeds() {
+    const counts = unreadCounts();
     els.feedList.innerHTML = '';
+
     const all = document.createElement('div');
     all.className = 'feed-item' + (state.activeId === 'all' ? ' active' : '');
-    all.innerHTML = `<span class="title">Alle Artikel</span>`;
+    all.innerHTML = `<span class="title">Alle Artikel</span>${countBadge(counts.all)}`;
     all.onclick = () => selectFeed('all');
     els.feedList.appendChild(all);
 
     for (const f of state.feeds) {
+      const c = counts[f.id] || 0;
       const el = document.createElement('div');
       el.className = 'feed-item' + (state.activeId === f.id ? ' active' : '');
       el.innerHTML = `
         <span class="title" title="${escapeAttr(f.url)}">${escapeHtml(f.title)}</span>
+        ${countBadge(c)}
         <button class="remove" title="Feed entfernen">&times;</button>`;
       el.querySelector('.title').onclick = () => selectFeed(f.id);
       el.querySelector('.remove').onclick = (e) => {
@@ -81,9 +100,27 @@
     }
   }
 
+  function dayLabel(d) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - day) / 86400000);
+    if (diff <= 0) return 'Heute';
+    if (diff === 1) return 'Gestern';
+    if (diff === 2) return 'Vorgestern';
+    const sameYear = day.getFullYear() === today.getFullYear();
+    return day.toLocaleDateString('de', {
+      weekday: 'long', day: '2-digit', month: 'long',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    });
+  }
+
   function renderItems() {
     const hideRead = els.hideRead.checked;
-    const items = hideRead ? state.items.filter(i => !state.read.has(i.guid)) : state.items;
+    let items = state.items;
+    if (state.activeId !== 'all') items = items.filter(i => i.feedId === state.activeId);
+    if (hideRead) items = items.filter(i => !state.read.has(i.guid));
+
+    setStatus(items.length ? `${items.length} Artikel` : '');
 
     if (!items.length) {
       els.items.innerHTML = `<div class="empty">${
@@ -95,10 +132,20 @@
     }
 
     els.items.innerHTML = '';
+    let lastDay = null;
     for (const it of items) {
+      const date = new Date((it.date || 0) * 1000);
+      const day  = dayLabel(date);
+      if (day !== lastDay) {
+        const header = document.createElement('li');
+        header.className = 'day-header';
+        header.textContent = day;
+        els.items.appendChild(header);
+        lastDay = day;
+      }
+
       const li = document.createElement('li');
       li.className = 'entry' + (state.read.has(it.guid) ? ' read' : '');
-      const date = new Date((it.date || 0) * 1000);
       li.innerHTML = `
         <a class="open-original" href="${escapeAttr(it.link)}" target="_blank" rel="noopener noreferrer" title="Auf Originalseite öffnen" aria-label="Auf Originalseite öffnen">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -108,7 +155,7 @@
         </a>
         <div class="entry-head">
           <span class="feed-name">${escapeHtml(it.feedTitle)}</span>
-          <time datetime="${date.toISOString()}">${formatDate(date)}</time>
+          <time datetime="${date.toISOString()}">${date.toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit' })}</time>
         </div>
         <h3><button class="title-btn" type="button">${escapeHtml(it.title || '(ohne Titel)')}</button></h3>
         <div class="summary"></div>
@@ -129,6 +176,7 @@
         markRead(it.guid);
         li.classList.add('read');
         setReadLabel();
+        renderFeeds();
       };
 
       titleBtn.onclick = async () => {
@@ -163,6 +211,7 @@
         const isRead = state.read.has(it.guid);
         li.classList.toggle('read', isRead);
         setReadLabel();
+        renderFeeds();
         if (els.hideRead.checked && isRead) li.remove();
       };
 
@@ -186,13 +235,6 @@
     }[c]));
   }
   function escapeAttr(s) { return escapeHtml(s); }
-  function formatDate(d) {
-    const now = new Date();
-    const diffH = (now - d) / 36e5;
-    if (diffH < 24) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (diffH < 24 * 7) return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-    return d.toLocaleDateString();
-  }
 
   // --- actions ---
   async function loadFeeds() {
@@ -204,10 +246,10 @@
   async function loadItems() {
     setStatus('Lädt …');
     try {
-      const data = await api('items', { query: { id: state.activeId } });
+      const data = await api('items', { query: { id: 'all' } });
       state.items = data.items || [];
+      renderFeeds();
       renderItems();
-      setStatus(`${state.items.length} Artikel`);
     } catch (e) {
       setStatus('Fehler: ' + e.message);
     }
@@ -218,7 +260,7 @@
     const f = state.feeds.find(x => x.id === id);
     els.current.textContent = f ? f.title : 'Alle Artikel';
     renderFeeds();
-    loadItems();
+    renderItems();
   }
 
   async function addFeed(url) {
