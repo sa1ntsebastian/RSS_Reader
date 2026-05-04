@@ -213,18 +213,29 @@ function extract_article(string $url): ?array {
     $best = null; $bestScore = 0;
     foreach ($candidates as $q) {
         foreach ($xp->query($q) as $node) {
-            $text = trim(preg_replace('/\s+/u', ' ', $node->textContent ?? ''));
-            $score = mb_strlen($text);
+            $score = paragraph_score($xp, $node);
             if ($score > $bestScore) { $best = $node; $bestScore = $score; }
         }
     }
+
+    // Strategy 2: the lowest common ancestor of all "real" paragraphs.
+    // Catches sites where the article body is split across siblings
+    // and no single tagged container holds the whole text.
+    $longParas = $xp->query('//p[string-length(normalize-space(.)) > 60]');
+    if ($longParas->length >= 3) {
+        $lca = lowest_common_ancestor($longParas);
+        if ($lca) {
+            $score = paragraph_score($xp, $lca);
+            if ($score > $bestScore) { $best = $lca; $bestScore = $score; }
+        }
+    }
+
     // Fallback: pick the <div> or <section> with the most paragraph text
     if (!$best || $bestScore < 400) {
         foreach ($xp->query('//div | //section') as $node) {
             $pCount = $xp->evaluate('count(.//p)', $node);
             if ($pCount < 3) continue;
-            $text = trim(preg_replace('/\s+/u', ' ', $node->textContent ?? ''));
-            $score = mb_strlen($text);
+            $score = paragraph_score($xp, $node);
             if ($score > $bestScore) { $best = $node; $bestScore = $score; }
         }
     }
@@ -275,6 +286,39 @@ function extract_article(string $url): ?array {
         'title' => $title ?: null,
         'html'  => trim($inner),
     ];
+}
+
+/**
+ * Score a candidate container by the total length of its <p> text.
+ * This rewards real article bodies and ignores wrappers full of menus.
+ */
+function paragraph_score(DOMXPath $xp, DOMNode $node): int {
+    $sum = 0;
+    foreach ($xp->query('.//p', $node) as $p) {
+        $t = trim(preg_replace('/\s+/u', ' ', $p->textContent ?? ''));
+        $len = mb_strlen($t);
+        if ($len >= 40) $sum += $len;
+    }
+    return $sum;
+}
+
+/** Lowest common ancestor of a DOMNodeList. */
+function lowest_common_ancestor(DOMNodeList $nodes): ?DOMNode {
+    if ($nodes->length === 0) return null;
+    if ($nodes->length === 1) return $nodes->item(0)->parentNode;
+
+    // Build the chain of ancestors for the first node
+    $chain = [];
+    for ($n = $nodes->item(0); $n; $n = $n->parentNode) $chain[] = $n;
+
+    for ($i = 1; $i < $nodes->length; $i++) {
+        $set = [];
+        for ($n = $nodes->item($i); $n; $n = $n->parentNode) $set[spl_object_id($n)] = true;
+        // Walk the existing chain from deepest to root, drop until we find a shared ancestor
+        while ($chain && !isset($set[spl_object_id($chain[0])])) array_shift($chain);
+        if (!$chain) return null;
+    }
+    return $chain[0] ?? null;
 }
 
 function absolutize_url(string $base, string $href): string {

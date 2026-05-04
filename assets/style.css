@@ -39,13 +39,20 @@ body {
   color: var(--text);
   display: grid;
   grid-template-columns: 280px 1fr;
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><circle cx="3" cy="3" r="3" fill="%23f5f5f7"/></svg>'),
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><circle cx="3" cy="3" r="3" fill="%23797ab9"/></svg>') 3 3,
           auto;
 }
 
 button { font: inherit; cursor: inherit; }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* In reading mode hand back the system cursor — text gets I-beam, links get pointer */
+.entry.article-loaded.open,
+.entry.article-loaded.open * { cursor: auto; }
+.entry.article-loaded.open a,
+.entry.article-loaded.open button,
+.entry.article-loaded.open .open-original { cursor: pointer; }
 
 .etoile,
 .brand h1,
