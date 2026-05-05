@@ -13,3 +13,14 @@
     Require all denied
   </IfModule>
 </Files>
+
+# Pretty URLs for app icons so iOS sees clean .png paths instead of
+# query strings (some iOS versions have caching issues with ?size=…)
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^icon-([0-9]+)\.png$ assets/icon.php?size=$1 [L,QSA]
+  RewriteRule ^apple-touch-icon-([0-9]+)\.png$ assets/icon.php?size=$1 [L,QSA]
+  RewriteRule ^apple-touch-icon-([0-9]+x[0-9]+)\.png$ assets/icon.php?size=180 [L,QSA]
+  RewriteRule ^apple-touch-icon-precomposed\.png$ assets/icon.php?size=180 [L,QSA]
+  RewriteRule ^apple-touch-icon\.png$ assets/icon.php?size=180 [L,QSA]
+</IfModule>
