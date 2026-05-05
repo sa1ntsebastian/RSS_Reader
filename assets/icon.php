@@ -43,6 +43,17 @@ if (!empty($_GET['debug'])) {
 // nocache=1 deletes the cached PNG before regeneration
 if (!empty($_GET['nocache']) && is_file($cacheFile)) @unlink($cacheFile);
 
+// Auto-invalidate the cache if the bundled TTF (or this script) was updated
+// after the cached PNG was generated. Saves manual cache busting after a font change.
+if (is_file($cacheFile)) {
+    $cacheTime = filemtime($cacheFile);
+    $invalidate = false;
+    foreach ([__FILE__, find_icon_font()] as $src) {
+        if ($src && is_file($src) && filemtime($src) > $cacheTime) { $invalidate = true; break; }
+    }
+    if ($invalidate) @unlink($cacheFile);
+}
+
 if (is_file($cacheFile)) {
     header('Content-Type: image/png');
     header('Cache-Control: public, max-age=86400');
