@@ -279,6 +279,24 @@ function extract_article(string $url): ?array {
     }
     if (!$best || $bestScore < 200) return null;
 
+    // Parent promotion: if going one level up substantially raises the
+    // paragraph score (siblings of the chosen container also hold prose),
+    // prefer the parent. Catches sites like derStandard where the article
+    // body is split across multiple sibling containers under a wrapper.
+    $cur = $best;
+    for ($i = 0; $i < 4; $i++) {
+        $parent = $cur->parentNode;
+        if (!$parent instanceof DOMElement) break;
+        $tag = strtolower($parent->nodeName);
+        if (in_array($tag, ['body','html'], true)) break;
+        $parentScore = paragraph_score($xp, $parent);
+        // Only promote if parent gains us notably more text and isn't a
+        // navigation-like wrapper (rough check: link density should stay low).
+        if ($parentScore > $bestScore * 1.25 && link_density($xp, $parent) < 0.4) {
+            $best = $parent; $bestScore = $parentScore; $cur = $parent;
+        } else break;
+    }
+
     $strip = ['script','style','noscript','iframe','form','aside','nav','header','footer','svg','button'];
     foreach ($strip as $tag) {
         $kill = [];
@@ -325,14 +343,87 @@ function extract_article(string $url): ?array {
     ];
 }
 
+function extract_article_debug(string $url): ?array {
+    $err = null;
+    $html = http_get($url, $err);
+    if ($html === null) return ['fetch_error' => $err];
+
+    libxml_use_internal_errors(true);
+    $doc = new DOMDocument();
+    $doc->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NONET);
+    libxml_clear_errors();
+    $xp = new DOMXPath($doc);
+
+    $candidates = [
+        '//article','//*[@itemprop="articleBody"]','//main',
+        '//*[contains(@class,"article-body")]','//*[contains(@class,"story-content")]',
+        '//*[contains(@class,"entry-content")]','//*[contains(@class,"post-content")]',
+        '//*[contains(@class,"content-body")]','//*[contains(@class,"article-paragraphs")]',
+        '//*[contains(@id,"article")]','//*[contains(@id,"content")]',
+    ];
+    $rows = [];
+    foreach ($candidates as $q) {
+        foreach ($xp->query($q) as $node) {
+            $rows[] = [
+                'selector'   => $q,
+                'tag'        => $node->nodeName,
+                'class'      => $node instanceof DOMElement ? $node->getAttribute('class') : '',
+                'id'         => $node instanceof DOMElement ? $node->getAttribute('id') : '',
+                'p_score'    => paragraph_score($xp, $node),
+                'text_chars' => mb_strlen(trim(preg_replace('/\s+/u', ' ', $node->textContent ?? ''))),
+                'p_count'    => $xp->evaluate('count(.//p)', $node),
+                'link_dens'  => round(link_density($xp, $node), 2),
+            ];
+        }
+    }
+    $longParas = $xp->query('//p[string-length(normalize-space(.)) > 60]');
+    $lcaInfo = null;
+    if ($longParas->length >= 2) {
+        $lca = lowest_common_ancestor($longParas);
+        if ($lca instanceof DOMElement) {
+            $lcaInfo = [
+                'tag'        => $lca->nodeName,
+                'class'      => $lca->getAttribute('class'),
+                'id'         => $lca->getAttribute('id'),
+                'p_score'    => paragraph_score($xp, $lca),
+                'long_paras' => $longParas->length,
+                'link_dens'  => round(link_density($xp, $lca), 2),
+            ];
+        }
+    }
+    $art = extract_article($url);
+    return [
+        'url'             => $url,
+        'fetch_bytes'     => strlen($html),
+        'tagged_candidates' => $rows,
+        'lca_of_long_paras' => $lcaInfo,
+        'final_chars'     => $art ? mb_strlen(strip_tags($art['html'])) : 0,
+        'final_words'     => $art['words'] ?? 0,
+        'final_html_preview' => $art ? mb_substr($art['html'], 0, 600) : null,
+    ];
+}
+
 function paragraph_score(DOMXPath $xp, DOMNode $node): int {
     $sum = 0;
-    foreach ($xp->query('.//p', $node) as $p) {
+    // Treat <p>, <li> and <blockquote> as content-bearing
+    foreach ($xp->query('.//p | .//li | .//blockquote', $node) as $p) {
         $t = trim(preg_replace('/\s+/u', ' ', $p->textContent ?? ''));
         $len = mb_strlen($t);
         if ($len >= 40) $sum += $len;
     }
     return $sum;
+}
+
+/** Ratio of link text to overall text inside a node (0..1). High = nav/menu. */
+function link_density(DOMXPath $xp, DOMNode $node): float {
+    $text = trim(preg_replace('/\s+/u', ' ', $node->textContent ?? ''));
+    $textLen = mb_strlen($text);
+    if ($textLen === 0) return 1.0;
+    $linkLen = 0;
+    foreach ($xp->query('.//a', $node) as $a) {
+        $linkLen += mb_strlen(trim(preg_replace('/\s+/u', ' ', $a->textContent ?? '')));
+    }
+    return $linkLen / max(1, $textLen);
 }
 
 function lowest_common_ancestor(DOMNodeList $nodes): ?DOMNode {
@@ -466,8 +557,15 @@ try {
     }
 
     if ($method === 'GET' && $action === 'article') {
-        $url = trim((string)($_GET['url'] ?? ''));
+        $url   = trim((string)($_GET['url'] ?? ''));
+        $debug = !empty($_GET['debug']);
         if (!filter_var($url, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url)) fail(400, 'Ungültige URL');
+        if ($debug) {
+            $info = extract_article_debug($url);
+            if (!$info) fail(422, 'Konnte den Artikel nicht extrahieren');
+            echo json_encode($info, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         $art = extract_article($url);
         if (!$art) fail(422, 'Konnte den Artikel nicht extrahieren');
         echo json_encode($art, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
