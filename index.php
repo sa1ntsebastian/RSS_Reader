@@ -14,11 +14,11 @@ require_login_html();
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="RSS">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="apple-touch-icon" sizes="180x180" href="assets/icon.php?size=180">
-  <link rel="apple-touch-icon" sizes="167x167" href="assets/icon.php?size=167">
-  <link rel="apple-touch-icon" sizes="152x152" href="assets/icon.php?size=152">
-  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
-  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon.php?size=32">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/icon.php?size=180&v=2">
+  <link rel="apple-touch-icon" sizes="167x167" href="assets/icon.php?size=167&v=2">
+  <link rel="apple-touch-icon" sizes="152x152" href="assets/icon.php?size=152&v=2">
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg?v=2">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon.php?size=32&v=2">
   <link rel="stylesheet" href="assets/style.css?v=4">
 </head>
 <body>

@@ -33,7 +33,7 @@ if (!empty($_GET['nocache']) && is_file($cacheFile)) @unlink($cacheFile);
 
 if (is_file($cacheFile)) {
     header('Content-Type: image/png');
-    header('Cache-Control: public, max-age=31536000, immutable');
+    header('Cache-Control: public, max-age=86400');
     readfile($cacheFile);
     exit;
 }
@@ -101,7 +101,7 @@ if ($font && function_exists('imagettftext')) {
 
 @imagepng($im, $cacheFile, 9);
 header('Content-Type: image/png');
-header('Cache-Control: public, max-age=31536000, immutable');
+header('Cache-Control: public, max-age=86400');
 imagepng($im);
 imagedestroy($im);
 
