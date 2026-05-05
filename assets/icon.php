@@ -15,6 +15,17 @@ $cacheFile = __DIR__ . "/icon-cache-{$size}.png";
 
 // ?debug=1 reports which font was found and where the cache file is
 if (!empty($_GET['debug'])) {
+    $font = find_icon_font();
+    $glyphProbe = null;
+    if ($font && function_exists('imagettfbbox')) {
+        $bboxLower = imagettfbbox(60, 0, $font, 'r');
+        $bboxUpper = imagettfbbox(60, 0, $font, 'R');
+        $glyphProbe = [
+            'lowercase_r_width' => $bboxLower ? $bboxLower[2] - $bboxLower[0] : 0,
+            'uppercase_R_width' => $bboxUpper ? $bboxUpper[2] - $bboxUpper[0] : 0,
+            'will_use'          => ($bboxLower && ($bboxLower[2] - $bboxLower[0]) >= 9) ? 'rss' : 'RSS',
+        ];
+    }
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode([
         'requested_size' => $size,
@@ -22,7 +33,8 @@ if (!empty($_GET['debug'])) {
         'cache_exists'   => is_file($cacheFile),
         'gd_available'   => function_exists('imagecreatetruecolor'),
         'ttf_supported'  => function_exists('imagettftext'),
-        'font_used'      => find_icon_font(),
+        'font_used'      => $font,
+        'glyph_probe'    => $glyphProbe,
         'searched_paths' => debug_font_candidates(),
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     exit;
@@ -68,6 +80,16 @@ $tracking = 0.18; // letter-spacing factor relative to font size
 if ($font && function_exists('imagettftext')) {
     // Compute font size such that the "rss" word fills ~62% of the icon width.
     $fontSize = (int)round($size * 0.55);
+
+    // Detect whether the chosen font actually has glyphs for our letters.
+    // Many display fonts (incl. some etoile cuts) only ship uppercase —
+    // imagettfbbox returns a zero-width box for missing glyphs, which would
+    // produce a blank icon. Fall back to uppercase if that's the case.
+    $probe = imagettfbbox($fontSize, 0, $font, 'r');
+    if (!$probe || ($probe[2] - $probe[0]) < $fontSize * 0.15) {
+        $letters = ['R', 'S', 'S'];
+    }
+
     [$widths, $totalW, $maxH] = measure_word($fontSize, $font, $letters, $tracking);
 
     // If the word doesn't fit horizontally, scale font down
