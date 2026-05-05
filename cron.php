@@ -31,15 +31,51 @@ if (!is_dir($CACHE_DIR)) @mkdir($CACHE_DIR, 0775, true);
 // Pull in the api.php helpers without executing routing. We can't easily
 // include api.php (it auto-routes), so duplicate the small bits we need.
 require_once __DIR__ . '/cron-lib.php';
+require_once __DIR__ . '/push.php';
 
 @set_time_limit(120);
 ignore_user_abort(true);
 
 $feeds = load_json_safe($FEEDS_FILE);
+
+// Snapshot of guids before refresh — used to detect what's new
+$before = [];
+foreach ($feeds as $f) {
+    $cache = load_json_safe($CACHE_DIR . '/' . $f['id'] . '.json');
+    foreach (($cache['items'] ?? []) as $it) if (!empty($it['guid'])) $before[$it['guid']] = true;
+}
+
 $started = microtime(true);
 $updated = refresh_all_cron($feeds, $CACHE_DIR);
 save_json_safe($FEEDS_FILE, $updated);
 $ms = (int)round((microtime(true) - $started) * 1000);
 
+// Compare after-refresh guids to detect newcomers
+$newCount = 0;
+$newest = null;
+foreach ($updated as $f) {
+    $cache = load_json_safe($CACHE_DIR . '/' . $f['id'] . '.json');
+    foreach (($cache['items'] ?? []) as $it) {
+        if (empty($it['guid'])) continue;
+        if (!isset($before[$it['guid']])) {
+            $newCount++;
+            if (!$newest || ($it['date'] ?? 0) > ($newest['date'] ?? 0)) $newest = $it;
+        }
+    }
+}
+
+$pushStats = null;
+if ($newCount > 0) {
+    $pushStats = push_send_all('mailto:admin@localhost', [
+        'title' => $newCount === 1 ? 'Neuer Artikel' : "$newCount neue Artikel",
+        'body'  => $newest ? mb_substr((string)$newest['title'], 0, 120) : '',
+        'count' => $newCount,
+        'url'   => './',
+    ]);
+}
+
 header('Content-Type: text/plain; charset=utf-8');
-echo "ok – " . count($updated) . " feed(s) refreshed in {$ms}ms\n";
+echo "ok – " . count($updated) . " feed(s) refreshed in {$ms}ms";
+if ($newCount > 0) echo " · {$newCount} new";
+if ($pushStats)    echo " · pushed: " . json_encode($pushStats);
+echo "\n";

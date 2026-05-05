@@ -6,16 +6,20 @@ require_login_html();
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>RSS Reader</title>
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#175d3b">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="RSS">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/icon.php?size=180">
+  <link rel="apple-touch-icon" sizes="167x167" href="assets/icon.php?size=167">
+  <link rel="apple-touch-icon" sizes="152x152" href="assets/icon.php?size=152">
   <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=3">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon.php?size=32">
+  <link rel="stylesheet" href="assets/style.css?v=4">
 </head>
 <body>
   <aside id="sidebar">
@@ -65,6 +69,22 @@ require_login_html();
     </footer>
   </aside>
 
+  <div id="ctx-sheet" class="hidden" aria-hidden="true">
+    <div class="ctx-backdrop"></div>
+    <div class="ctx-panel" role="menu">
+      <div class="ctx-title"></div>
+      <button data-ctx="toggle-read"></button>
+      <button data-ctx="toggle-star"></button>
+      <button data-ctx="share">teilen</button>
+      <button data-ctx="open">im browser öffnen</button>
+      <button data-ctx="cancel" class="ctx-cancel">abbrechen</button>
+    </div>
+  </div>
+
+  <div id="pull-indicator" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg>
+  </div>
+
   <main id="content">
     <header id="content-header">
       <div class="content-titles">
@@ -95,6 +115,13 @@ require_login_html();
       <label class="toggle">
         <input type="checkbox" id="set-hideread"> Standard: nur ungelesene anzeigen
       </label>
+
+      <h3>Push-Benachrichtigungen</h3>
+      <p class="hint">Bei neuen Artikeln (durch den Cron) bekommst du eine Mitteilung. Erfordert PWA-Installation auf iOS 16.4+.</p>
+      <div class="token-row">
+        <button type="button" id="btn-push-toggle">aktivieren</button>
+        <button type="button" id="btn-push-test" title="Test-Notification senden">testen</button>
+      </div>
 
       <h3>Widget-Token</h3>
       <p class="hint">Wird vom iOS-Widget zum Lesen genutzt. Nicht weitergeben.</p>

@@ -28,6 +28,10 @@
     btnNewFolder: document.getElementById('btn-new-folder'),
     newPill:    document.getElementById('new-pill'),
     contentHeader: document.getElementById('content-header'),
+    pullIndicator: document.getElementById('pull-indicator'),
+    ctxSheet:   document.getElementById('ctx-sheet'),
+    btnPushToggle: document.getElementById('btn-push-toggle'),
+    btnPushTest:   document.getElementById('btn-push-test'),
   };
 
   const COLLAPSED_KEY = 'rss.collapsedFolders';
@@ -581,54 +585,121 @@
 
   function attachSwipe(li, it, ctx) {
     let startX = 0, startY = 0, dx = 0, dy = 0, active = false, decided = false;
-    const TH = 60; // px to commit
+    let pressTimer = null;
+    let longPressed = false;
+    const TH = 70; // px to commit
     const setOffset = (x) => { li.style.transform = x ? `translateX(${x}px)` : ''; };
     const setHint = (cls) => {
-      li.classList.remove('swipe-read', 'swipe-star');
+      li.classList.remove('swipe-read');
       if (cls) li.classList.add(cls);
     };
+    const cancelLongPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
 
     li.addEventListener('touchstart', (e) => {
       if (li.classList.contains('open')) return;
       if (e.touches.length !== 1) return;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
-      dx = 0; dy = 0; active = true; decided = false;
+      dx = 0; dy = 0; active = true; decided = false; longPressed = false;
+      pressTimer = setTimeout(() => {
+        if (!active || decided) return;
+        longPressed = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        openContextSheet(li, it, ctx);
+      }, 480);
     }, { passive: true });
 
     li.addEventListener('touchmove', (e) => {
       if (!active) return;
       dx = e.touches[0].clientX - startX;
       dy = e.touches[0].clientY - startY;
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) cancelLongPress();
       if (!decided) {
         if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) { active = false; return; }
         if (Math.abs(dx) > 8) decided = true;
       }
       if (decided) {
+        const offset = Math.max(0, dx);
         e.preventDefault();
-        setOffset(dx);
-        setHint(dx < -TH ? 'swipe-read' : dx > TH ? 'swipe-star' : '');
+        setOffset(offset);
+        setHint(offset > TH ? 'swipe-read' : '');
       }
     }, { passive: false });
 
-    li.addEventListener('touchend', () => {
+    li.addEventListener('touchend', (e) => {
+      cancelLongPress();
       if (!active) return;
       active = false;
-      const committed = Math.abs(dx) > TH;
+      const committed = dx > TH;
       setOffset(0);
       setHint('');
-      if (!committed) return;
-      if (dx < 0) {
-        // left swipe → mark read & close
-        ctx.closeAndMarkRead();
-      } else {
-        // right swipe → toggle star
-        toggleStar(it.guid);
-        li.classList.toggle('starred', state.starred.has(it.guid));
+      if (committed) ctx.closeAndMarkRead();
+      if (longPressed) {
+        e.preventDefault();
+        // suppress the click that would otherwise toggle the article
+        const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); document.removeEventListener('click', stop, true); };
+        document.addEventListener('click', stop, true);
       }
     });
-    li.addEventListener('touchcancel', () => { active = false; setOffset(0); setHint(''); });
+    li.addEventListener('touchcancel', () => {
+      cancelLongPress();
+      active = false; setOffset(0); setHint('');
+    });
   }
+
+  // ---------- Context sheet (long-press menu) ----------
+  let ctxState = null;
+  function openContextSheet(li, it, ctx) {
+    ctxState = { li, it, ctx };
+    const isRead = state.read.has(it.guid);
+    const isStar = state.starred.has(it.guid);
+    els.ctxSheet.querySelector('.ctx-title').textContent = it.title || '';
+    els.ctxSheet.querySelector('[data-ctx="toggle-read"]').textContent = isRead ? 'als ungelesen markieren' : 'als gelesen markieren';
+    els.ctxSheet.querySelector('[data-ctx="toggle-star"]').textContent = isStar ? 'stern entfernen' : 'mit stern markieren';
+    const shareBtn = els.ctxSheet.querySelector('[data-ctx="share"]');
+    shareBtn.style.display = (navigator.share || navigator.clipboard) ? '' : 'none';
+    els.ctxSheet.classList.remove('hidden');
+    requestAnimationFrame(() => els.ctxSheet.classList.add('open'));
+  }
+  function closeContextSheet() {
+    els.ctxSheet.classList.remove('open');
+    setTimeout(() => { els.ctxSheet.classList.add('hidden'); ctxState = null; }, 200);
+  }
+  els.ctxSheet.addEventListener('click', async (e) => {
+    const action = e.target.closest('[data-ctx]')?.dataset.ctx;
+    if (!action) {
+      if (e.target.classList.contains('ctx-backdrop')) closeContextSheet();
+      return;
+    }
+    const s = ctxState;
+    closeContextSheet();
+    if (!s) return;
+    const { li, it } = s;
+    switch (action) {
+      case 'toggle-read': {
+        toggleRead(it.guid);
+        const isRead = state.read.has(it.guid);
+        li.classList.toggle('read', isRead);
+        renderFeeds();
+        if (els.hideRead.checked && isRead && !state.starred.has(it.guid)) li.remove();
+        break;
+      }
+      case 'toggle-star':
+        toggleStar(it.guid);
+        li.classList.toggle('starred', state.starred.has(it.guid));
+        renderFeeds();
+        break;
+      case 'share':
+        try {
+          if (navigator.share) await navigator.share({ title: it.title, url: it.link });
+          else { await navigator.clipboard.writeText(it.link); setStatus('Link kopiert'); setTimeout(() => setStatus(''), 1500); }
+        } catch {}
+        break;
+      case 'open':
+        window.open(it.link, '_blank', 'noopener,noreferrer');
+        break;
+    }
+  });
 
   // ---------- actions ----------
   async function loadFeeds() {
@@ -800,6 +871,7 @@
     els.setRefresh.value  = Math.round((state.settings.refresh_interval || 0) / 60);
     els.setHideRead.checked = !!state.settings.hide_read_default;
     els.setToken.value    = state.settings.api_token || '';
+    refreshPushUi();
     if (typeof els.dialog.showModal === 'function') els.dialog.showModal();
     else els.dialog.setAttribute('open', '');
   }
@@ -923,6 +995,132 @@
   });
 
   window.addEventListener('beforeunload', () => { if (state.pendingFlush) flushState(); });
+
+  // ---------- Web Push ----------
+  function urlBase64ToUint8Array(b64) {
+    const padded = b64 + '='.repeat((4 - b64.length % 4) % 4);
+    const bin = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  }
+
+  async function refreshPushUi() {
+    if (!els.btnPushToggle) return;
+    const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    if (!supported) {
+      els.btnPushToggle.textContent = 'browser unterstützt push nicht';
+      els.btnPushToggle.disabled = true;
+      els.btnPushTest.disabled = true;
+      return;
+    }
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    els.btnPushToggle.textContent = sub ? 'deaktivieren' : 'aktivieren';
+    els.btnPushToggle.dataset.active = sub ? '1' : '0';
+  }
+
+  async function ensureSwRegistered() {
+    if (!('serviceWorker' in navigator)) return null;
+    const existing = await navigator.serviceWorker.getRegistration();
+    if (existing) return existing;
+    return navigator.serviceWorker.register('sw.js');
+  }
+
+  async function pushSubscribe() {
+    if (Notification.permission === 'denied') { alert('Benachrichtigungen sind im System gesperrt — in den iOS-Einstellungen freigeben.'); return; }
+    if (Notification.permission !== 'granted') {
+      const p = await Notification.requestPermission();
+      if (p !== 'granted') return;
+    }
+    const reg = await ensureSwRegistered();
+    if (!reg) return;
+    const { public: pubKey } = await api('push-key');
+    if (!pubKey) { alert('Server-Schlüssel fehlt (PHP openssl?).'); return; }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(pubKey),
+    });
+    await api('push-subscribe', { method: 'POST', body: { subscription: sub.toJSON ? sub.toJSON() : sub } });
+    refreshPushUi();
+  }
+
+  async function pushUnsubscribe() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) {
+      await api('push-unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+      await sub.unsubscribe();
+    }
+    refreshPushUi();
+  }
+
+  if (els.btnPushToggle) {
+    els.btnPushToggle.addEventListener('click', async () => {
+      els.btnPushToggle.disabled = true;
+      try {
+        if (els.btnPushToggle.dataset.active === '1') await pushUnsubscribe();
+        else await pushSubscribe();
+      } catch (e) { alert('Push: ' + e.message); }
+      finally { els.btnPushToggle.disabled = false; }
+    });
+  }
+  if (els.btnPushTest) {
+    els.btnPushTest.addEventListener('click', async () => {
+      try {
+        const r = await api('push-test', { method: 'POST' });
+        alert('Test gesendet: ' + JSON.stringify(r));
+      } catch (e) { alert('Test fehlgeschlagen: ' + e.message); }
+    });
+  }
+  // Pre-register the service worker on load (no push yet)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  // ---------- Pull-to-refresh (mobile) ----------
+  (function setupPullToRefresh() {
+    const ind = els.pullIndicator;
+    if (!ind) return;
+    const TRIGGER = 80; // px to commit
+    let startY = 0, dy = 0, active = false;
+    document.addEventListener('touchstart', (e) => {
+      if (window.scrollY > 4) return;
+      if (e.touches.length !== 1) return;
+      startY = e.touches[0].clientY;
+      dy = 0; active = true;
+      ind.classList.remove('refreshing', 'commit');
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if (!active) return;
+      dy = e.touches[0].clientY - startY;
+      if (dy < 0) { active = false; ind.style.transform = ''; ind.classList.remove('visible', 'commit'); return; }
+      if (window.scrollY > 4) { active = false; return; }
+      // soft easing: pull resistance
+      const eased = Math.min(120, dy * 0.55);
+      ind.classList.add('visible');
+      ind.style.transform = `translate(-50%, ${eased}px) rotate(${dy * 1.4}deg)`;
+      ind.classList.toggle('commit', dy > TRIGGER);
+    }, { passive: true });
+    document.addEventListener('touchend', async () => {
+      if (!active) return;
+      active = false;
+      const commit = dy > TRIGGER;
+      ind.style.transform = '';
+      if (commit) {
+        ind.classList.add('refreshing');
+        try { await refreshAll(true); }
+        finally { setTimeout(() => ind.classList.remove('refreshing', 'visible', 'commit'), 200); }
+      } else {
+        ind.classList.remove('visible', 'commit');
+      }
+    });
+    document.addEventListener('touchcancel', () => {
+      active = false;
+      ind.style.transform = '';
+      ind.classList.remove('visible', 'commit', 'refreshing');
+    });
+  })();
 
   // ---------- init ----------
   (async () => {

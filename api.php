@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/auth.php';
+require __DIR__ . '/push.php';
 
 $DATA_DIR     = __DIR__ . '/data';
 $FEEDS_FILE   = $DATA_DIR . '/feeds.json';
@@ -752,6 +753,36 @@ try {
         echo json_encode($new);
         exit;
     }
+    if ($method === 'GET' && $action === 'push-key') {
+        $keys = push_keys();
+        echo json_encode(['public' => $keys['public'] ?? null]);
+        exit;
+    }
+    if ($method === 'POST' && $action === 'push-subscribe') {
+        $sub = $body['subscription'] ?? null;
+        if (!is_array($sub) || empty($sub['endpoint'])) fail(400, 'subscription fehlt');
+        $subs = push_load_subs();
+        // dedupe by endpoint
+        $subs = array_values(array_filter($subs, fn($s) => ($s['endpoint'] ?? '') !== $sub['endpoint']));
+        $subs[] = ['endpoint' => $sub['endpoint'], 'keys' => $sub['keys'] ?? null, 'added' => time()];
+        push_save_subs($subs);
+        echo json_encode(['ok' => true, 'count' => count($subs)]);
+        exit;
+    }
+    if ($method === 'POST' && $action === 'push-unsubscribe') {
+        $endpoint = (string)($body['endpoint'] ?? '');
+        $subs = push_load_subs();
+        $subs = array_values(array_filter($subs, fn($s) => ($s['endpoint'] ?? '') !== $endpoint));
+        push_save_subs($subs);
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+    if ($method === 'POST' && $action === 'push-test') {
+        $stats = push_send_all('mailto:admin@localhost', null);
+        echo json_encode($stats);
+        exit;
+    }
+
     if ($method === 'POST' && $action === 'regenerate-token') {
         $tok = auth_regenerate_token();
         if (!$tok) fail(500, 'Konnte Token nicht erzeugen');

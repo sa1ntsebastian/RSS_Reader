@@ -1,5 +1,11 @@
 data/feeds.json
+data/folders.json
+data/state.json
+data/settings.json
+data/vapid.json
+data/push-subscriptions.json
 data/cache/
 config.php
+assets/icon-cache-*.png
 *.log
 .DS_Store
