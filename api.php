@@ -82,8 +82,8 @@ function load_state(string $file): array {
     return $s;
 }
 
-function http_get(string $url, ?string &$err = null): ?string {
-    $ua     = 'SimpleRSSReader/1.0';
+function http_get(string $url, ?string &$err = null, ?string $ua = null): ?string {
+    $ua     = $ua ?? 'SimpleRSSReader/1.0';
     $accept = 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, text/html;q=0.8, */*;q=0.5';
 
     if (function_exists('curl_init')) {
@@ -234,9 +234,36 @@ function clean_html(string $html): string {
     return $html;
 }
 
+/**
+ * Smart wrapper: tries the default UA first; if the result looks gated
+ * (privacywall, very short body) we retry as Googlebot, which most German
+ * news sites serve the full article to for SEO purposes.
+ */
 function extract_article(string $url): ?array {
+    $first = extract_article_with_ua($url, null);
+
+    $looksGated = static function (?string $html, ?array $art): bool {
+        if ($html !== null && preg_match('#privacywall|consent[-_]?wall|paywall|tcf-banner|cmp-overlay#i', $html)) return true;
+        if ($art && ($art['words'] ?? 0) < 250) return true;
+        if (!$art) return true;
+        return false;
+    };
+
+    if ($looksGated($first['_raw'] ?? null, $first)) {
+        $bot = extract_article_with_ua($url, 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+        if ($bot && (!$first || ($bot['words'] ?? 0) > ($first['words'] ?? 0) * 1.4)) {
+            $bot['extracted_via'] = 'googlebot';
+            unset($bot['_raw']);
+            return $bot;
+        }
+    }
+    if ($first) { unset($first['_raw']); $first['extracted_via'] = 'default'; }
+    return $first;
+}
+
+function extract_article_with_ua(string $url, ?string $ua): ?array {
     $err = null;
-    $html = http_get($url, $err);
+    $html = http_get($url, $err, $ua);
     if ($html === null || strlen($html) < 200) return null;
 
     libxml_use_internal_errors(true);
@@ -340,6 +367,7 @@ function extract_article(string $url): ?array {
         'html'         => trim($inner),
         'words'        => $words,
         'reading_min'  => $minutes,
+        '_raw'         => $html, // private; consumed by extract_article()
     ];
 }
 
