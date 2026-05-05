@@ -778,7 +778,11 @@ try {
         exit;
     }
     if ($method === 'POST' && $action === 'push-test') {
-        $stats = push_send_all('mailto:admin@localhost', null);
+        $stats = push_send_all(push_default_subject(), [
+            'title' => 'RSS — Test',
+            'body'  => 'Push funktioniert',
+            'url'   => './',
+        ]);
         echo json_encode($stats);
         exit;
     }

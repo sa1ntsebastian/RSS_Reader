@@ -144,11 +144,19 @@ function push_save_subs(array $subs): void {
     @rename($tmp, $f);
 }
 
-/** Send a payload-less push to one subscription endpoint. Returns HTTP status. */
-function push_send_one(string $endpoint, array $keys, string $subject, ?array $payload = null): int {
+function push_default_subject(): string {
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    // Strip port; mailto: must be a syntactically reasonable address.
+    $host = preg_replace('/:\d+$/', '', $host);
+    if ($host === 'localhost' || $host === '') $host = 'example.com';
+    return 'mailto:noreply@' . $host;
+}
+
+/** Send a payload-less push to one subscription endpoint. */
+function push_send_one(string $endpoint, array $keys, string $subject, ?array $payload = null, ?string &$err = null, ?string &$bodyOut = null): int {
     $aud = (string)parse_url($endpoint, PHP_URL_SCHEME) . '://' . (string)parse_url($endpoint, PHP_URL_HOST);
     $jwt = push_jwt($aud, $subject, $keys);
-    if (!$jwt) return -1;
+    if (!$jwt) { $err = 'jwt_failed'; return -1; }
 
     $headers = [
         'Authorization: vapid t=' . $jwt . ', k=' . $keys['public'],
@@ -159,9 +167,6 @@ function push_send_one(string $endpoint, array $keys, string $subject, ?array $p
         $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $headers[] = 'Content-Type: application/json';
         $headers[] = 'Content-Encoding: identity';
-        // NOTE: encrypted payload requires aes128gcm/AES-GCM with ECDH; not
-        // implemented here. Browsers may refuse identity-encoded bodies.
-        // Default operation is payload-less (body=''), which always works.
     }
     $headers[] = 'Content-Length: ' . strlen($body);
 
@@ -173,25 +178,37 @@ function push_send_one(string $endpoint, array $keys, string $subject, ?array $p
         CURLOPT_HTTPHEADER     => $headers,
         CURLOPT_TIMEOUT        => 10,
     ]);
-    curl_exec($ch);
+    $resp = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    if ($resp === false) { $err = 'curl: ' . curl_error($ch); }
+    elseif ($code >= 300) { $err = 'http ' . $code; }
+    $bodyOut = is_string($resp) ? $resp : '';
     curl_close($ch);
     return $code;
 }
 
-/** Send a notification to every stored subscription. Drops gone (404/410) ones. */
 function push_send_all(string $subject, ?array $payload = null): array {
     $keys = push_keys();
-    if (!$keys) return ['error' => 'no keys'];
+    if (!$keys) return ['error' => 'no keys', 'sent' => 0, 'gone' => 0, 'failed' => 0];
     $subs = push_load_subs();
-    $stats = ['sent' => 0, 'gone' => 0, 'failed' => 0];
+    $stats = ['sent' => 0, 'gone' => 0, 'failed' => 0, 'detail' => []];
     $alive = [];
     foreach ($subs as $s) {
         if (empty($s['endpoint'])) continue;
-        $code = push_send_one($s['endpoint'], $keys, $subject, $payload);
+        $err = null; $body = null;
+        $code = push_send_one($s['endpoint'], $keys, $subject, $payload, $err, $body);
+        $host = parse_url($s['endpoint'], PHP_URL_HOST) ?: 'unknown';
         if ($code >= 200 && $code < 300) { $stats['sent']++; $alive[] = $s; }
         elseif ($code === 404 || $code === 410) { $stats['gone']++; }
-        else { $stats['failed']++; $alive[] = $s; }
+        else {
+            $stats['failed']++; $alive[] = $s;
+            $stats['detail'][] = [
+                'host' => $host,
+                'code' => $code,
+                'error' => $err,
+                'body' => mb_substr((string)$body, 0, 280),
+            ];
+        }
     }
     if ($stats['gone'] > 0) push_save_subs($alive);
     return $stats;

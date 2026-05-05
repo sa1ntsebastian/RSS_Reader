@@ -66,7 +66,7 @@ foreach ($updated as $f) {
 
 $pushStats = null;
 if ($newCount > 0) {
-    $pushStats = push_send_all('mailto:admin@localhost', [
+    $pushStats = push_send_all(push_default_subject(), [
         'title' => $newCount === 1 ? 'Neuer Artikel' : "$newCount neue Artikel",
         'body'  => $newest ? mb_substr((string)$newest['title'], 0, 120) : '',
         'count' => $newCount,
