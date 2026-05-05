@@ -13,7 +13,25 @@ declare(strict_types=1);
 $size = max(32, min(1024, (int)($_GET['size'] ?? 180)));
 $cacheFile = __DIR__ . "/icon-cache-{$size}.png";
 
-if (is_file($cacheFile) && empty($_GET['nocache'])) {
+// ?debug=1 reports which font was found and where the cache file is
+if (!empty($_GET['debug'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'requested_size' => $size,
+        'cache_file'     => $cacheFile,
+        'cache_exists'   => is_file($cacheFile),
+        'gd_available'   => function_exists('imagecreatetruecolor'),
+        'ttf_supported'  => function_exists('imagettftext'),
+        'font_used'      => find_icon_font(),
+        'searched_paths' => debug_font_candidates(),
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+// nocache=1 deletes the cached PNG before regeneration
+if (!empty($_GET['nocache']) && is_file($cacheFile)) @unlink($cacheFile);
+
+if (is_file($cacheFile)) {
     header('Content-Type: image/png');
     header('Cache-Control: public, max-age=31536000, immutable');
     readfile($cacheFile);
@@ -89,11 +107,16 @@ imagedestroy($im);
 
 // ---- helpers ----
 
-function find_icon_font(): ?string {
-    $candidates = [
+function debug_font_candidates(): array {
+    return [
         __DIR__ . '/etoile_font/Etoile-Regular.ttf',
         __DIR__ . '/etoile_font/etoile.ttf',
         __DIR__ . '/etoile_font/Etoile.ttf',
+        __DIR__ . '/Etoile-Regular.ttf',
+        __DIR__ . '/etoile.ttf',
+        __DIR__ . '/font/Etoile-Regular.ttf',
+        __DIR__ . '/fonts/Etoile-Regular.ttf',
+        __DIR__ . '/../etoile_font/Etoile-Regular.ttf',
         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
         '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
         '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
@@ -102,7 +125,19 @@ function find_icon_font(): ?string {
         '/Library/Fonts/Arial.ttf',
         '/System/Library/Fonts/Helvetica.ttc',
     ];
-    foreach ($candidates as $p) if (is_file($p) && is_readable($p)) return $p;
+}
+
+function find_icon_font(): ?string {
+    foreach (debug_font_candidates() as $p) {
+        if (is_file($p) && is_readable($p)) return $p;
+    }
+    // Last attempt: glob for any *.ttf inside the etoile_font dir
+    foreach (glob(__DIR__ . '/etoile_font/*.ttf') ?: [] as $hit) {
+        if (is_readable($hit)) return $hit;
+    }
+    foreach (glob(__DIR__ . '/*.ttf') ?: [] as $hit) {
+        if (is_readable($hit)) return $hit;
+    }
     return null;
 }
 
